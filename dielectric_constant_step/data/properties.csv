@@ -1,1 +1,3 @@
 Property,Type,Units,Description,URL
+dielectric constant#Dielectric Constant#{model},float,,"The static dielectric constant using {model}",https://en.wikipedia.org/wiki/Relative_permittivity
+"dielectric constant,stderr#Dielectric Constant#{model}",float,,"The standard error of the static dielectric constant using {model}",https://en.wikipedia.org/wiki/Relative_permittivity

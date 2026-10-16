@@ -9,7 +9,7 @@ A SEAMM plug-in for Dielectric Constant
 # the dielectric_constant_step package.
 
 from .dielectric_constant import DielectricConstant  # noqa: F401, E501
-from .dielectric_constant_parameters import DielectricConstantParameters  # noqa: F401, E501
+from .dielectric_constant_parameters import DielectricConstantParameters  # noqa: F401
 from .dielectric_constant_step import DielectricConstantStep  # noqa: F401, E501
 from .tk_dielectric_constant import TkDielectricConstant  # noqa: F401, E501
 
