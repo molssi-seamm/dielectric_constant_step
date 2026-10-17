@@ -7,19 +7,26 @@ equilibrium MD with fixed charges and Ewald or PPPM electrostatics:
 ε = 1 + (⟨M²⟩ − ⟨M⟩²) / (3 V ε0 kB T). For an electrolyte, M is the dipole of the
 neutral molecules: the ions carry a current, not a bounded dipole. The analysis is
 in :mod:`seamm_md_analysis.electric`.
+
+The MD is run before this step -- in a Loop for independent runs -- or read from
+files; the step analyzes it.
 """
 
 from collections import Counter
 import importlib.resources
 import logging
 from pathlib import Path
-import sys
-import traceback
 import warnings
 
 import numpy as np
-from seamm_md_analysis import open_md
+from seamm_md_analysis import (
+    Estimate,
+    component_check,
+    isotropy,
+    open_md,
+)
 from seamm_md_analysis.electric import (
+    _factor,
     cell_dipole,
     classify_molecules,
     dielectric_constant,
@@ -27,11 +34,13 @@ from seamm_md_analysis.electric import (
 )
 from seamm_md_analysis.requirements import Need, Requirements
 from seamm_md_analysis.step_support import (
+    print_details,
     check_md_flowchart,
     md_inputs,
     read_files,
-    request_sampling,
-    run_own_md,
+    report_state,
+    size_warnings,
+    state_data,
 )
 from tabulate import tabulate
 
@@ -57,6 +66,10 @@ if path.exists():
 
 #: The kspace styles with conducting boundaries, for which the formula holds
 EWALD_STYLES = ("ewald", "pppm")
+#: e·Å in debye
+DEBYE = 4.80320471
+#: The most frames used for the mean molecular dipole
+MAX_DIPOLE_FRAMES = 200
 
 
 def hill_formula(symbols):
@@ -76,9 +89,6 @@ class DielectricConstant(seamm.Node):
 
     Attributes
     ----------
-    subflowchart : seamm.Flowchart
-        The MD to run, when this step runs its own MD.
-
     parameters : DielectricConstantParameters
         The control parameters for Dielectric Constant.
     """
@@ -87,15 +97,10 @@ class DielectricConstant(seamm.Node):
         self,
         flowchart=None,
         title="Dielectric Constant",
-        namespace="org.molssi.seamm",
         extension=None,
         logger=logger,
     ):
         logger.debug(f"Creating Dielectric Constant {self}")
-        self.subflowchart = seamm.Flowchart(
-            parent=self, name="Dielectric Constant", namespace=namespace
-        )
-
         super().__init__(
             flowchart=flowchart,
             title="Dielectric Constant",
@@ -106,7 +111,6 @@ class DielectricConstant(seamm.Node):
 
         self._metadata = dielectric_constant_step.metadata
         self.parameters = dielectric_constant_step.DielectricConstantParameters()
-        self._file_handler = None
         self._reset()
 
     @property
@@ -128,8 +132,6 @@ class DielectricConstant(seamm.Node):
         parser_name = "dielectric-constant-step"
         parser = seamm_util.getParser()
 
-        self.subflowchart._parser = self.flowchart._parser
-
         parser_exists = parser.exists(parser_name)
         super().create_parser(name=parser_name)
         if not parser_exists:
@@ -139,12 +141,6 @@ class DielectricConstant(seamm.Node):
                 action="store_true",
                 help="whether to write out html files for graphs, etc.",
             )
-
-        self.subflowchart.reset_visited()
-        node = self.subflowchart.get_node("1").next()
-        while node is not None:
-            node = node.create_parser()
-
         return self.next()
 
     def description_text(self, P=None, short=False):
@@ -158,25 +154,12 @@ class DielectricConstant(seamm.Node):
         else:
             what += P["dipole of"]
 
-        source = P.get("md source", run_own_md)
-        if source == run_own_md:
-            text = f"Calculate {what}, from {P['nruns']} runs of the MD below.\n\n"
+        source = P["md source"]
+        text = f"Calculate {what}, from "
+        if source == read_files:
+            text += f"the MD in {P['md files']}."
         else:
-            text = f"Calculate {what}, from "
-            if source == read_files:
-                text += f"the MD in {P['md files']}.\n\n"
-            else:
-                text += f"{source} earlier in the flowchart.\n\n"
-            short = True
-
-        if not short:
-            self.subflowchart.root_directory = self.flowchart.root_directory
-            node = self.subflowchart.get_node("1").next()
-            while node is not None:
-                text += __(node.description_text()).__str__()
-                text += "\n"
-                node = node.next()
-
+            text += f"{source} earlier in the flowchart."
         return self.header + "\n" + __(text, indent=4 * " ").__str__()
 
     def run(self):
@@ -187,18 +170,9 @@ class DielectricConstant(seamm.Node):
         P = self.parameters.current_values_to_dict(
             context=seamm.flowchart_variables._data
         )
-        printer.important(__(self.description_text(P, short=True), indent=self.indent))
+        printer.important(__(self.description_text(P), indent=self.indent))
 
         _, configuration = self.get_system_configuration()
-        if (
-            P["md source"] == run_own_md
-            and configuration is not None
-            and configuration.periodicity != 3
-        ):
-            raise RuntimeError(
-                "The Dielectric Constant step needs a periodic system: the "
-                "fluctuation formula is for a periodic cell."
-            )
 
         self.references.cite(
             raw=self._bibliography["Neumann1983"],
@@ -208,131 +182,31 @@ class DielectricConstant(seamm.Node):
             note="The dielectric constant from the fluctuations of the dipole.",
         )
 
-        handlers = self._quiet_handlers()
-        try:
-            if P["md source"] == run_own_md:
-                self._run_own_md(P)
-            else:
-                self.paths = md_inputs(self, P, name="all/position")
-                printer.job(
-                    __(
-                        f"Analyzing {len(self.paths)} MD run"
-                        f"{'s' if len(self.paths) > 1 else ''}: "
-                        + ", ".join(str(p) for p in self.paths),
-                        indent=self.indent + 4 * " ",
-                    )
-                )
-        finally:
-            self._restore_handlers(handlers)
-
+        self.paths = md_inputs(self, P, name="all/position")
+        printer.job(
+            __(
+                f"Analyzing {len(self.paths)} MD run"
+                f"{'s' if len(self.paths) > 1 else ''}: "
+                + ", ".join(str(p) for p in self.paths),
+                indent=self.indent + 4 * " ",
+            )
+        )
         if len(self.paths) == 0:
             raise RuntimeError("No MD run finished, so there is nothing to analyze.")
 
         self.analyze(P=P, configuration=configuration)
         return next_node
 
-    def _quiet_handlers(self):
-        """Send only job-level output to job.out and the screen while MD runs."""
-        result = []
-        for handler in job.handlers:
-            if (
-                isinstance(handler, logging.FileHandler)
-                and "job.out" in handler.baseFilename
-            ) or isinstance(handler, logging.StreamHandler):
-                result.append((handler, handler.level))
-                handler.setLevel(printing.JOB)
-        return result
-
-    @staticmethod
-    def _restore_handlers(handlers):
-        for handler, level in handlers:
-            handler.setLevel(level)
-
-    def _run_own_md(self, P):
-        """Run the MD in the sub-flowchart several times, keeping each run's file."""
-        changes, missing = request_sampling(self.subflowchart, self.md_requirements(P))
-        for change in changes:
-            printer.job(__(f"Note: {change}.", indent=self.indent + 4 * " "))
-        if len(missing) > 0:
-            raise RuntimeError(
-                "The MD in the sub-flowchart cannot provide what is needed: "
-                + " ".join(missing)
-            )
-
-        first_node = self.subflowchart.get_node("1").next()
-        if first_node is None:
-            raise RuntimeError(
-                "The sub-flowchart of the Dielectric Constant step is empty."
-            )
-        node = first_node
-        while node is not None:
-            node.all_options = self.all_options
-            node = node.next()
-        self.subflowchart.executor = self.flowchart.executor
-
-        nruns = P["nruns"]
-        fmt_run = f"0{len(str(nruns))}"
-        for run in range(1, nruns + 1):
-            run_dir = Path(self.directory) / f"run_{run:{fmt_run}}"
-            run_dir.mkdir(parents=True, exist_ok=True)
-
-            if self._file_handler is not None:
-                self._file_handler.close()
-                job.removeHandler(self._file_handler)
-            path = run_dir / "Run.out"
-            path.unlink(missing_ok=True)
-            self._file_handler = logging.FileHandler(path)
-            self._file_handler.setLevel(printing.NORMAL)
-            formatter = logging.Formatter(fmt="{message:s}", style="{")
-            self._file_handler.setFormatter(formatter)
-            job.addHandler(self._file_handler)
-
-            self.flowchart.reset_visited()
-            self.set_subids((*self._id, f"run_{run:{fmt_run}}"))
-
-            node = first_node
-            try:
-                while node is not None:
-                    node = node.run()
-            except DeprecationWarning as e:
-                printer.normal("\nDeprecation warning: " + str(e))
-                traceback.print_exc(file=sys.stderr)
-                traceback.print_exc(file=sys.stdout)
-            except Exception as e:
-                printer.job(f"Caught exception in run {run}: {str(e)}")
-                with open(run_dir / "stderr.out", "a") as fd:
-                    traceback.print_exc(file=fd)
-                if "continue" in P["errors"]:
-                    continue
-                elif "exit" in P["errors"]:
-                    break
-                else:
-                    raise
-            else:
-                self.paths.append(self._read_run(run, run_dir))
-
-        if self._file_handler is not None:
-            self._file_handler.close()
-            job.removeHandler(self._file_handler)
-            self._file_handler = None
-
-    def _read_run(self, run, run_dir):
-        """The md.h5md of one run of the sub-flowchart with the positions."""
-        paths = []
-        for path in sorted(run_dir.glob("**/md.h5md")):
-            with open_md(path) as md:
-                if md.has_particles("position"):
-                    paths.append(path)
-        if len(paths) == 0:
-            raise RuntimeError(f"There are no positions for run {run} in {run_dir}.")
-        return paths[-1]
-
     # ------------------------------------------------------------------
     # The analysis
     # ------------------------------------------------------------------
-    def _read(self, path, configuration, atoms, charges):
-        """The dipole in each frame, the interval between frames (ps), and the
-        mean volume (Å³) and temperature (K) of one run."""
+    def _read(self, path, configuration, molecules, charges):
+        """One run: the dipole of the cell in each frame, the interval between
+        frames (ps), the mean volume (Å³) and temperature (K), the mean dipole of a
+        molecule (e·Å), the kspace style, and whether the run is isotropic."""
+        atoms = np.concatenate(molecules)
+        starts = np.cumsum([0] + [len(m) for m in molecules[:-1]])
+        q = charges[atoms]
         with open_md(path) as md:
             if not md.periodic:
                 raise RuntimeError(f"The MD in {path} is not periodic.")
@@ -346,15 +220,47 @@ class DielectricConstant(seamm.Node):
                 else None
             )
             T = float(md.observable("temperature", units="K").values.mean())
+            kspace = md.parameters.get("kspace_style")
+            isotropic = isotropy(md)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 u = md.universe(configuration)
+            n_frames = len(u.trajectory)
+            every = max(1, n_frames // MAX_DIPOLE_FRAMES)
             M = []
             V = []
-            for ts in u.trajectory:
-                M.append(cell_dipole(ts.positions, atoms, charges))
+            mu = []
+            for i, ts in enumerate(u.trajectory):
+                M.append(cell_dipole(ts.positions, atoms, q))
                 V.append(ts.volume)
-        return np.array(M), dt, float(np.mean(V)), T
+                if i % every == 0:
+                    # The positions are unwrapped, so each molecule is whole
+                    dipoles = np.add.reduceat(q[:, None] * ts.positions[atoms], starts)
+                    mu.append(np.linalg.norm(dipoles, axis=1).mean())
+        return {
+            "M": np.array(M),
+            "dt": dt,
+            "V": float(np.mean(V)),
+            "T": T,
+            "mu": float(np.mean(mu)),
+            "kspace": kspace,
+            "isotropic": isotropic,
+        }
+
+    @staticmethod
+    def _sample(M, V, T, n_molecules, mu):
+        """ε, its diagonal components, the Kirkwood factor and |⟨M⟩| (e·Å) of one
+        run or block."""
+        mean = M.mean(axis=0)
+        variance = M.var(axis=0)
+        factor = _factor(V, T)
+        total = float(variance.sum())
+        return {
+            "epsilon": 1.0 + factor * total,
+            "components": 1.0 + 3.0 * factor * variance,
+            "g_K": total / (n_molecules * mu**2) if mu > 0 else float("nan"),
+            "M": float(np.linalg.norm(mean)),
+        }
 
     def analyze(self, indent="", P=None, configuration=None, **kwargs):
         """Analyze, print, plot and store the dielectric constant."""
@@ -365,7 +271,6 @@ class DielectricConstant(seamm.Node):
 
         with open_md(self.paths[0]) as md:
             charges = md.charges("all")
-            kspace = md.parameters.get("kspace_style")
         if charges is None:
             raise RuntimeError(
                 f"'{self.title}': the MD has no fixed charges, as with a "
@@ -379,9 +284,9 @@ class DielectricConstant(seamm.Node):
             mode == "automatic" and len(classes["ions"]) > 0
         )
         chosen = classes["neutral"] if neutral_only else list(range(len(molecules)))
+        chosen = [m for m in chosen if m not in classes["other"]]
         if len(chosen) == 0:
             raise RuntimeError(f"'{self.title}': there are no neutral molecules.")
-        atoms = np.array(sorted(i for m in chosen for i in molecules[m]))
 
         notes = []
         names = Counter(
@@ -405,69 +310,89 @@ class DielectricConstant(seamm.Node):
                 "not an integer, which is a problem with the charges; they are "
                 "left out."
             )
-            atoms = np.array(
-                [
-                    i
-                    for i in atoms
-                    if all(i not in molecules[m] for m in classes["other"])
-                ]
-            )
-        if kspace is None:
-            notes.append(
-                "The MD does not record its electrostatics. The formula assumes Ewald "
-                "or PPPM summation with conducting boundaries."
-            )
-        elif not kspace.split()[0].startswith(EWALD_STYLES):
-            notes.append(
-                f"The MD used kspace_style '{kspace}'. The formula holds for Ewald or "
-                "PPPM summation with conducting boundaries, so the value may be "
-                "wrong."
-            )
 
-        runs = [self._read(p, configuration, atoms, charges[atoms]) for p in self.paths]
+        chosen_molecules = [np.array(molecules[m]) for m in chosen]
+        runs = [
+            self._read(p, configuration, chosen_molecules, charges) for p in self.paths
+        ]
         nruns = len(runs)
-        n_blocks = P["number of blocks"] if nruns == 1 else 1
-        if nruns == 1 and P["md source"] == run_own_md:
-            n_blocks = 1
-        fits = [dielectric_constant(M, V, T, n_blocks=n_blocks) for M, _, V, T in runs]
-        values = np.array([f["epsilon"] for f in fits])
-        epsilon = float(values.mean())
-        if nruns > 1:
-            stderr = float(values.std(ddof=1) / np.sqrt(nruns))
-            how = f"the standard error over the {nruns} runs"
-        else:
-            stderr = fits[0]["stderr"]
-            how = (
-                f"from {fits[0]['n_blocks']} blocks of the run"
-                if stderr is not None
-                else "no error estimate: use several runs or blocks"
-            )
-        T = float(np.mean([r[3] for r in runs]))
-        V = float(np.mean([r[2] for r in runs]))
-        dt = runs[0][1]
-        n_frames = sum(len(r[0]) for r in runs)
+        n_molecules = len(chosen)
 
+        # The independent samples: the runs, or blocks of a single run
+        if nruns > 1:
+            source = "runs"
+            samples = [
+                self._sample(r["M"], r["V"], r["T"], n_molecules, r["mu"]) for r in runs
+            ]
+        else:
+            source = "blocks"
+            run = runs[0]
+            n_blocks = max(1, min(int(P["number of blocks"]), len(run["M"]) // 2))
+            samples = [
+                self._sample(block, run["V"], run["T"], n_molecules, run["mu"])
+                for block in np.array_split(run["M"], n_blocks)
+            ]
+
+        def estimate(key, scale=1.0):
+            values = [s[key] * scale for s in samples]
+            if len(values) < 2:
+                return Estimate(float(values[0]), None, 1, source=source)
+            return Estimate.from_samples(values, source=source)
+
+        # ε from the whole of each run, the error from the samples
+        fits = [dielectric_constant(r["M"], r["V"], r["T"], n_blocks=1) for r in runs]
+        epsilon = estimate("epsilon")
+        epsilon.value = float(np.mean([f["epsilon"] for f in fits]))
+        g_K = estimate("g_K")
+        M_mean = estimate("M", DEBYE)
+        mu = Estimate.from_samples([r["mu"] * DEBYE for r in runs])
+        components = np.array([s["components"] for s in samples])
+        check = component_check(components, names=["ε_xx", "ε_yy", "ε_zz"])
+        isotropic, why = runs[0]["isotropic"]
+
+        dt = runs[0]["dt"]
         tau = None
         try:
-            acf = dipole_correlation(runs[0][0], dt or 1.0)
+            acf = dipole_correlation(runs[0]["M"], dt or 1.0)
             tau = acf["tau"]
         except Exception as e:
             acf = None
             logger.warning(f"No autocorrelation of the dipole: {e}")
+        n_frames = sum(len(r["M"]) for r in runs)
 
-        table = {
-            "Property": ["ε", "Dipole correlation time", "Temperature", "Volume"],
-            "Value": [
-                f"{epsilon:.1f}",
-                "" if tau is None else f"{tau:.2f}",
-                f"{T:.2f}",
-                f"{V:.1f}",
-            ],
-            "±": ["" if stderr is None else f"{stderr:.1f}", "", "", ""],
-            "Units": ["", "ps", "K", "Å^3"],
-        }
+        table = {"Property": [], "Value": [], "± (95%)": [], "Units": []}
+
+        def row(label, value, units=""):
+            if isinstance(value, Estimate):
+                v, e = value.formatted()
+            else:
+                v, e = ("" if value is None else f"{value:.3g}"), ""
+            table["Property"].append(label)
+            table["Value"].append(v)
+            table["± (95%)"].append(e)
+            table["Units"].append(units)
+
+        row("ε", epsilon)
+        if not isotropic:
+            for name, i in (("ε_xx", 0), ("ε_yy", 1), ("ε_zz", 2)):
+                row(
+                    name,
+                    (
+                        Estimate.from_samples(components[:, i], source=source)
+                        if len(components) > 1
+                        else float(components[0, i])
+                    ),
+                )
+        row("Molecular dipole μ", mu, "D")
+        row("Kirkwood factor g_K", g_K)
+        row("|⟨M⟩| of the cell", M_mean, "D")
+        row("Dipole correlation time", tau, "ps")
         text = tabulate(
-            table, headers="keys", tablefmt="simple_outline", disable_numparse=True
+            table,
+            headers="keys",
+            tablefmt="rounded_outline",
+            disable_numparse=True,
+            colalign=("left", "decimal", "decimal", "left"),
         )
         length = len(text.splitlines()[0])
         printer.normal(
@@ -478,41 +403,87 @@ class DielectricConstant(seamm.Node):
                 dedent=False,
             )
         )
-        printer.normal(
-            __(
-                f"From {n_frames} frames of {nruns} run{'s' if nruns > 1 else ''}"
-                + (f", every {dt:.3g} ps" if dt else "")
-                + f"; the error is {how}.",
-                indent=8 * " ",
+        lines = [
+            f"From {n_frames} frames of {nruns} run{'s' if nruns > 1 else ''}"
+            + (f", every {dt:.3g} ps" if dt else "")
+            + f", for {n_molecules} molecules. "
+            + epsilon.describe_error()
+        ]
+        if isotropic:
+            lines.append(check.text)
+        else:
+            lines.append(
+                f"The run is not treated as isotropic ({why}), so the diagonal "
+                "components are given; ε is a third of their sum."
             )
+        kspace = runs[0]["kspace"]
+        lines.append(
+            "The fluctuation formula assumes Ewald or PPPM electrostatics with "
+            "conducting (tin-foil) boundaries"
+            + ("." if kspace is None else f"; the runs used {kspace}.")
         )
+        if kspace is not None and not kspace.split()[0].startswith(EWALD_STYLES):
+            notes.append(
+                f"The runs used kspace_style '{kspace}', so the value may be wrong."
+            )
         if dt is not None and tau is not None:
-            length_ps = len(runs[0][0]) * dt
+            length_ps = len(runs[0]["M"]) * dt
             if length_ps < 50 * tau:
                 notes.append(
                     f"Each run is {length_ps:.0f} ps, only {length_ps / tau:.0f} times "
                     f"the correlation time of the dipole ({tau:.1f} ps). The "
                     "dielectric constant converges slowly: use longer or more runs."
                 )
-        for note in notes:
-            printer.normal(__(note, indent=8 * " "))
+        for line in lines + notes:
+            printer.normal(__(line, indent=8 * " "))
         printer.normal("")
+        self._print_samples(samples, source)
+
+        state = report_state(self, printer, self.paths)
 
         self._plot(fits, runs, acf, dt)
 
         self.model = self._find_model()
         data = {
-            "epsilon": epsilon,
-            "T": T,
-            "V": V,
+            "epsilon": epsilon.value,
+            "dipole moment": mu.value,
+            "Kirkwood factor": g_K.value,
             "nruns": nruns,
             "n_frames": n_frames,
         }
-        if stderr is not None:
-            data["epsilon,stderr"] = stderr
+        if epsilon.stderr is not None:
+            data["epsilon,stderr"] = epsilon.stderr
+        if g_K.stderr is not None:
+            data["Kirkwood factor,stderr"] = g_K.stderr
         if tau is not None:
             data["dipole correlation time"] = tau
+        if state is not None:
+            data.update(state_data(state))
         self.store_results(configuration=configuration, data=data)
+
+    def _print_samples(self, samples, source):
+        """The values of each run or block, in the detailed output."""
+        what = "Run" if source == "runs" else "Block"
+        table = {what: [], "ε": [], "ε_xx": [], "ε_yy": [], "ε_zz": [], "g_K": []}
+        for i, s in enumerate(samples, start=1):
+            table[what].append(i)
+            table["ε"].append(f"{s['epsilon']:.2f}")
+            for name, value in zip(("ε_xx", "ε_yy", "ε_zz"), s["components"]):
+                table[name].append(f"{value:.2f}")
+            table["g_K"].append(f"{s['g_K']:.3f}")
+        text = tabulate(
+            table,
+            headers="keys",
+            tablefmt="rounded_outline",
+            disable_numparse=True,
+            colalign=("center", "decimal", "decimal", "decimal", "decimal", "decimal"),
+        )
+        length = len(text.splitlines()[0])
+        title = f"By {what.lower()}".center(length)
+        print_details(
+            printer,
+            str(__("\n" + title + "\n" + text + "\n", indent=8 * " ", wrap=False)),
+        )
 
     def _plot(self, fits, runs, acf, dt):
         """The running estimate of ε, and the autocorrelation of the dipole."""
@@ -527,7 +498,7 @@ class DielectricConstant(seamm.Node):
         x_axis.anchor = y_axis
         for i, (fit, run) in enumerate(zip(fits, runs), start=1):
             counts, values = fit["running"]
-            step = run[1] or 1.0
+            step = run["dt"] or 1.0
             plot.add_trace(
                 x_axis=x_axis,
                 y_axis=y_axis,
@@ -580,7 +551,7 @@ class DielectricConstant(seamm.Node):
     # ------------------------------------------------------------------
     def md_requirements(self, P=None):
         """What the analysis needs from the MD: positions every 0.5 ps or so, in a
-        periodic cell."""
+        periodic cell. It analyzes fluctuations, not the dynamics."""
         interval = (
             P["frame interval"] if P is not None else self._static("frame interval")
         )
@@ -591,6 +562,7 @@ class DielectricConstant(seamm.Node):
         return Requirements(
             needs=[Need("all/position", max_time=interval, why="the dipole")],
             periodic=True,
+            dynamics=False,
         )
 
     def _static(self, key):
@@ -601,36 +573,24 @@ class DielectricConstant(seamm.Node):
         return parameter.get()
 
     def check_flowchart(self, preceding):
-        """Check, before the job runs, that the MD will sample what is needed."""
+        """Check, before the job runs, that the MD will sample what is needed and is
+        set up for the analysis."""
         source = self._static("md source")
         if source is None:
             return []
         return check_md_flowchart(self, preceding, self.md_requirements(), source)
 
     def check_configuration(self, configuration):
-        """Called by an MD step before it runs MD that this step will analyze."""
-        if self._static("md source") == run_own_md:
-            return
+        """Called by an MD step before it runs MD that this step will analyze.
+
+        Returns
+        -------
+        [str]
+            Warnings about the structure, e.g. that it is small.
+        """
         if configuration.periodicity != 3:
             raise RuntimeError(
                 f"'{self.title}' will analyze the MD, but the system is not "
                 "periodic: the fluctuation formula is for a periodic cell."
             )
-
-    def set_id(self, node_id=()):
-        """Sequentially number the subnodes"""
-        if self.visited:
-            return None
-        else:
-            self.visited = True
-            self._id = node_id
-            self.set_subids(self._id)
-            return self.next()
-
-    def set_subids(self, node_id=()):
-        """Set the ids of the nodes in the subflowchart"""
-        node = self.subflowchart.get_node("1").next()
-        n = 1
-        while node is not None:
-            node = node.set_id((*node_id, str(n)))
-            n += 1
+        return [f"'{self.title}': {w}" for w in size_warnings(configuration)]
