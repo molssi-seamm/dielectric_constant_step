@@ -2,7 +2,7 @@
 History
 =======
 
-2026.10.16 -- First release: the static dielectric constant
+2026.10.17 -- First release: the static dielectric constant
     * The static dielectric constant of liquids, and of the solvent of electrolytes,
       from the fluctuations of the dipole of the cell in MD with fixed charges, with
       errors from independent runs or blocks, the running estimate and the
