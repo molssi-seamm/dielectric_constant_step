@@ -32,8 +32,11 @@ class DielectricConstantStep(object):
     """
 
     my_description = {
-        "description": "An interface for Dielectric Constant",
-        "group": "Simulations",
+        "description": (
+            "The static dielectric constant of liquids and of the solvent of "
+            "electrolytes, from the fluctuations of the dipole in MD"
+        ),
+        "group": "Analysis",
         "name": "Dielectric Constant",
     }
 
@@ -63,7 +66,9 @@ class DielectricConstantStep(object):
         DielectricConstant
         """
 
-        return dielectric_constant_step.DielectricConstant(flowchart=flowchart, **kwargs)
+        return dielectric_constant_step.DielectricConstant(
+            flowchart=flowchart, **kwargs
+        )
 
     def create_tk_node(self, canvas=None, **kwargs):
         """Create and return the graphical Tk node object.

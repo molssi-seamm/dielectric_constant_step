@@ -26,7 +26,7 @@ SEAMM Dielectric Constant Plug-in
    :target: https://pypi.python.org/pypi/dielectric_constant_step
    :alt: PyPi VERSION
 
-A SEAMM plug-in for Dielectric Constant
+A SEAMM plug-in for the static dielectric constant of liquids and electrolytes from MD.
 
 * Free software: BSD-3-Clause
 * Documentation: https://molssi-seamm.github.io/dielectric_constant_step/index.html
@@ -35,7 +35,10 @@ A SEAMM plug-in for Dielectric Constant
 Features
 --------
 
-* Please edit this section!
+* The static dielectric constant of liquids, and of the solvent of electrolytes,
+  from the fluctuations of the dipole of the cell, with errors from runs or blocks,
+  the running estimate and the dipole's correlation time.
+* Runs its own MD or analyzes the MD earlier in the flowchart, from SEAMM's H5MD files.
 
 Acknowledgements
 ----------------

@@ -130,16 +130,47 @@ type : str
 units : str
     Optional units for the result. If present, the value should be in these units.
 """
-# metadata["results"] = {
-#     "total_energy": {
-#         "calculation": [
-#             "energy",
-#             "optimization",
-#         ],
-#         "description": "The total energy",
-#         "dimensionality": "scalar",
-#         "property": "total energy#DielectricConstant#{model}",
-#         "type": "float",
-#         "units": "E_h",
-#     },
-# }
+metadata["results"] = {
+    "epsilon": {
+        "description": "The static dielectric constant",
+        "dimensionality": "scalar",
+        "property": "dielectric constant#Dielectric Constant#{model}",
+        "type": "float",
+        "units": "",
+    },
+    "epsilon,stderr": {
+        "description": "The standard error of the static dielectric constant",
+        "dimensionality": "scalar",
+        "property": "dielectric constant,stderr#Dielectric Constant#{model}",
+        "type": "float",
+        "units": "",
+    },
+    "dipole correlation time": {
+        "description": "The correlation time of the dipole of the cell",
+        "dimensionality": "scalar",
+        "type": "float",
+        "units": "ps",
+    },
+    "T": {
+        "description": "The mean temperature",
+        "dimensionality": "scalar",
+        "type": "float",
+        "units": "K",
+    },
+    "V": {
+        "description": "The mean volume",
+        "dimensionality": "scalar",
+        "type": "float",
+        "units": "Å^3",
+    },
+    "nruns": {
+        "description": "The number of MD runs analyzed",
+        "dimensionality": "scalar",
+        "type": "integer",
+    },
+    "n_frames": {
+        "description": "The number of frames analyzed",
+        "dimensionality": "scalar",
+        "type": "integer",
+    },
+}

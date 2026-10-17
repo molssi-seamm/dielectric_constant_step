@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 
-"""The graphical part of a Dielectric Constant step"""
+"""The graphical part of a DielectricConstant step"""
 
 import pprint  # noqa: F401
-import tkinter as tk  # noqa: F401
+import tkinter as tk
+import tkinter.ttk as ttk
 
-import dielectric_constant_step  # noqa: F401
+from .dielectric_constant_parameters import DielectricConstantParameters
+from seamm_md_analysis.step_support import run_own_md
 import seamm
 from seamm_util import ureg, Q_, units_class  # noqa: F401
 import seamm_widgets as sw
@@ -13,7 +15,7 @@ import seamm_widgets as sw
 
 class TkDielectricConstant(seamm.TkNode):
     """
-    The graphical part of a Dielectric Constant step in a flowchart.
+    The graphical part of a DielectricConstant step in a flowchart.
 
     Attributes
     ----------
@@ -21,10 +23,6 @@ class TkDielectricConstant(seamm.TkNode):
         The flowchart that we belong to.
     node : Node = None
         The corresponding node of the non-graphical flowchart
-    namespace : str
-        The namespace of the current step.
-    tk_subflowchart : TkFlowchart
-        A graphical Flowchart representing a subflowchart
     canvas: tkCanvas = None
         The Tk Canvas to draw on
     dialog : Dialog
@@ -39,7 +37,7 @@ class TkDielectricConstant(seamm.TkNode):
         The height in pixels of the picture of the node
     self[widget] : dict
         A dictionary of tk widgets built using the information
-        contained in Dielectric Constant_parameters.py
+        contained in DielectricConstant parameterss.py
 
     See Also
     --------
@@ -51,6 +49,7 @@ class TkDielectricConstant(seamm.TkNode):
         self,
         tk_flowchart=None,
         node=None,
+        namespace="org.molssi.seamm.tk",
         canvas=None,
         x=None,
         y=None,
@@ -83,6 +82,7 @@ class TkDielectricConstant(seamm.TkNode):
         -------
         None
         """
+        self.namespace = namespace
         self.dialog = None
 
         super().__init__(
@@ -94,11 +94,12 @@ class TkDielectricConstant(seamm.TkNode):
             w=w,
             h=h,
         )
+        self.create_dialog()
 
     def create_dialog(self):
         """
         Create the dialog. A set of widgets will be chosen by default
-        based on what is specified in the Dielectric Constant_parameters
+        based on what is specified in the DielectricConstant parameterss
         module.
 
         Parameters
@@ -114,18 +115,53 @@ class TkDielectricConstant(seamm.TkNode):
         TkDielectricConstant.reset_dialog
         """
 
-        frame = super().create_dialog(title="Dielectric Constant")
+        frame = super().create_dialog(title="Dielectric Constant", widget="notebook")
+        # make it large!
+        screen_w = self.dialog.winfo_screenwidth()
+        screen_h = self.dialog.winfo_screenheight()
+        w = int(0.9 * screen_w)
+        h = int(0.8 * screen_h)
+        x = int(0.05 * screen_w / 2)
+        y = int(0.1 * screen_h / 2)
+
+        self.dialog.geometry(f"{w}x{h}+{x}+{y}")
+
+        # Add a frame for the flowchart
+        notebook = self["notebook"]
+        flowchart_frame = ttk.Frame(notebook)
+        self["flowchart frame"] = flowchart_frame
+        notebook.add(flowchart_frame, text="Flowchart", sticky=tk.NSEW)
+
+        self.tk_subflowchart = seamm.TkFlowchart(
+            master=flowchart_frame,
+            flowchart=self.node.subflowchart,
+            namespace=self.namespace,
+        )
+        self.tk_subflowchart.draw()
+
+        # Fill in the control parameters
         # Shortcut for parameters
         P = self.node.parameters
 
-        # Then create the widgets
-        for key in P:
-            if key[0] != "_" and key not in (
-                "results",
-                "extra keywords",
-                "create tables",
-            ):
-                self[key] = P[key].widget(frame)
+        # dielectric_constant frame to isolate widgets
+        frame = self["structure_frame"] = ttk.LabelFrame(
+            self["frame"],
+            borderwidth=4,
+            relief="sunken",
+            text="Dielectric Constant",
+            labelanchor="n",
+            padding=10,
+        )
+
+        for key in DielectricConstantParameters.parameters:
+            self[key] = P[key].widget(frame)
+
+        # and binding to change as needed
+        for key in DielectricConstantParameters.parameters:
+            if hasattr(self[key], "combobox"):
+                self[key].combobox.bind(
+                    "<<ComboboxSelected>>", self.reset_structure_frame
+                )
 
         # and lay them out
         self.reset_dialog()
@@ -134,7 +170,7 @@ class TkDielectricConstant(seamm.TkNode):
         """Layout the widgets in the dialog.
 
         The widgets are chosen by default from the information in
-        Dielectric Constant_parameter.
+        DielectricConstant parameters.
 
         This function simply lays them out row by row with
         aligned labels. You may wish a more complicated layout that
@@ -154,37 +190,48 @@ class TkDielectricConstant(seamm.TkNode):
         TkDielectricConstant.create_dialog
         """
 
-        # Remove any widgets previously packed
-        frame = self["frame"]
+        row = 0
+
+        self["structure_frame"].grid(row=row, column=0, sticky=tk.EW, pady=10)
+        row += 1
+        self.reset_structure_frame()
+
+        return row
+
+    def reset_structure_frame(self, widget=None):
+        """Layout the widgets in the dielectric_constant frame
+        as needed for the current state"""
+
+        source = self["md source"].get()
+        own_md = source == run_own_md
+
+        # The sub-flowchart is used only when this step runs its own MD
+        notebook = self["notebook"]
+        if own_md:
+            notebook.add(self["flowchart frame"])
+        else:
+            notebook.hide(self["flowchart frame"])
+
+        frame = self["structure_frame"]
         for slave in frame.grid_slaves():
             slave.grid_forget()
 
-        # Shortcut for parameters
+        # Show the controls that apply, given the others
         P = self.node.parameters
-
-        # keep track of the row in a variable, so that the layout is flexible
-        # if e.g. rows are skipped to control such as "method" here
+        values = {
+            key: self[key].get() for key in DielectricConstantParameters.parameters
+        }
         row = 0
         widgets = []
-        for key in P:
-            if key[0] != "_" and key not in (
-                "results",
-                "extra keywords",
-                "create tables",
-            ):
-                self[key].grid(row=row, column=0, sticky=tk.EW)
+        for key in DielectricConstantParameters.parameters:
+            if P.applies(key, values):
+                self[key].grid(row=row, column=0, columnspan=2, sticky=tk.W)
                 widgets.append(self[key])
                 row += 1
 
-        # Align the labels
         sw.align_labels(widgets, sticky=tk.E)
 
-        # Setup the results if there are any
-        have_results = (
-            "results" in self.node.metadata and len(self.node.metadata["results"]) > 0
-        )
-        if have_results and "results" in P:
-            self.setup_results()
+        frame.columnconfigure(0, minsize=50)
 
     def right_click(self, event):
         """
@@ -204,6 +251,6 @@ class TkDielectricConstant(seamm.TkNode):
         """
 
         super().right_click(event)
-        self.popup_menu.add_command(label="Edit..", command=self.edit)
+        self.popup_menu.add_command(label="Edit...", command=self.edit)
 
         self.popup_menu.tk_popup(event.x_root, event.y_root, 0)
