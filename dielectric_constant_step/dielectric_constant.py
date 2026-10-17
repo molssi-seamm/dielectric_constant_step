@@ -34,6 +34,7 @@ from seamm_md_analysis.electric import (
 )
 from seamm_md_analysis.requirements import Need, Requirements
 from seamm_md_analysis.step_support import (
+    print_details,
     check_md_flowchart,
     md_inputs,
     read_files,
@@ -479,8 +480,9 @@ class DielectricConstant(seamm.Node):
         )
         length = len(text.splitlines()[0])
         title = f"By {what.lower()}".center(length)
-        printer.verbose(
-            __("\n" + title + "\n" + text + "\n", indent=8 * " ", wrap=False)
+        print_details(
+            printer,
+            str(__("\n" + title + "\n" + text + "\n", indent=8 * " ", wrap=False)),
         )
 
     def _plot(self, fits, runs, acf, dt):
