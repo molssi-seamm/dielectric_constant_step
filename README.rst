@@ -38,7 +38,8 @@ Features
 * The static dielectric constant of liquids, and of the solvent of electrolytes,
   from the fluctuations of the dipole of the cell, with errors from runs or blocks,
   the running estimate and the dipole's correlation time.
-* Runs its own MD or analyzes the MD earlier in the flowchart, from SEAMM's H5MD files.
+* Analyzes the MD run before it in the flowchart -- the runs of a Loop around the MD,
+  as independent runs -- or md.h5md files of earlier runs.
 
 Acknowledgements
 ----------------
