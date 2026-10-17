@@ -1,0 +1,53 @@
+dielectric\_constant\_step package
+==================================
+
+Submodules
+----------
+
+dielectric\_constant\_step.dielectric\_constant module
+------------------------------------------------------
+
+.. automodule:: dielectric_constant_step.dielectric_constant
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+dielectric\_constant\_step.dielectric\_constant\_parameters module
+------------------------------------------------------------------
+
+.. automodule:: dielectric_constant_step.dielectric_constant_parameters
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+dielectric\_constant\_step.dielectric\_constant\_step module
+------------------------------------------------------------
+
+.. automodule:: dielectric_constant_step.dielectric_constant_step
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+dielectric\_constant\_step.metadata module
+------------------------------------------
+
+.. automodule:: dielectric_constant_step.metadata
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+dielectric\_constant\_step.tk\_dielectric\_constant module
+----------------------------------------------------------
+
+.. automodule:: dielectric_constant_step.tk_dielectric_constant
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+Module contents
+---------------
+
+.. automodule:: dielectric_constant_step
+   :members:
+   :show-inheritance:
+   :undoc-members:
