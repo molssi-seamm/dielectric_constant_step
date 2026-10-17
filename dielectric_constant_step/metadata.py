@@ -2,6 +2,8 @@
 
 """This file contains metadata describing the results from DielectricConstant"""
 
+from seamm_md_analysis.step_support import state_results
+
 metadata = {}
 
 """Description of the computational models for DielectricConstant.
@@ -151,18 +153,25 @@ metadata["results"] = {
         "type": "float",
         "units": "ps",
     },
-    "T": {
-        "description": "The mean temperature",
+    "dipole moment": {
+        "description": "The mean dipole moment of a molecule",
         "dimensionality": "scalar",
         "type": "float",
-        "units": "K",
+        "units": "debye",
     },
-    "V": {
-        "description": "The mean volume",
+    "Kirkwood factor": {
+        "description": "The Kirkwood factor g_K = (⟨M²⟩ − ⟨M⟩²) / (N μ²)",
         "dimensionality": "scalar",
         "type": "float",
-        "units": "Å^3",
+        "units": "",
     },
+    "Kirkwood factor,stderr": {
+        "description": "The standard error of the Kirkwood factor",
+        "dimensionality": "scalar",
+        "type": "float",
+        "units": "",
+    },
+    **state_results,
     "nruns": {
         "description": "The number of MD runs analyzed",
         "dimensionality": "scalar",
