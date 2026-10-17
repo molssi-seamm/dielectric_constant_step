@@ -6,7 +6,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>dielectric_constant_step.dielectric_constant &#8212; SEAMM Dielectric Constant Plug-in 2026.10.17 documentation</title>
+    <title>dielectric_constant_step.dielectric_constant &#8212; SEAMM Dielectric Constant Plug-in 2026.10.17.1 documentation</title>
   
   
   
@@ -39,7 +39,7 @@
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
 
-    <script src="../../_static/documentation_options.js?v=fed69469"></script>
+    <script src="../../_static/documentation_options.js?v=62bfd45e"></script>
     <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -52,7 +52,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="color-scheme" content="light dark"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="2026.10.17" />
+  <meta name="docsearch:version" content="2026.10.17.1" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -500,19 +500,26 @@
 <span class="sd">ε = 1 + (⟨M²⟩ − ⟨M⟩²) / (3 V ε0 kB T). For an electrolyte, M is the dipole of the</span>
 <span class="sd">neutral molecules: the ions carry a current, not a bounded dipole. The analysis is</span>
 <span class="sd">in :mod:`seamm_md_analysis.electric`.</span>
+
+<span class="sd">The MD is run before this step -- in a Loop for independent runs -- or read from</span>
+<span class="sd">files; the step analyzes it.</span>
 <span class="sd">"""</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">importlib.resources</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">traceback</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">seamm_md_analysis</span><span class="w"> </span><span class="kn">import</span> <span class="n">open_md</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">seamm_md_analysis</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Estimate</span><span class="p">,</span>
+    <span class="n">component_check</span><span class="p">,</span>
+    <span class="n">isotropy</span><span class="p">,</span>
+    <span class="n">open_md</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">seamm_md_analysis.electric</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">_factor</span><span class="p">,</span>
     <span class="n">cell_dipole</span><span class="p">,</span>
     <span class="n">classify_molecules</span><span class="p">,</span>
     <span class="n">dielectric_constant</span><span class="p">,</span>
@@ -520,11 +527,13 @@
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">seamm_md_analysis.requirements</span><span class="w"> </span><span class="kn">import</span> <span class="n">Need</span><span class="p">,</span> <span class="n">Requirements</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">seamm_md_analysis.step_support</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">print_details</span><span class="p">,</span>
     <span class="n">check_md_flowchart</span><span class="p">,</span>
     <span class="n">md_inputs</span><span class="p">,</span>
     <span class="n">read_files</span><span class="p">,</span>
-    <span class="n">request_sampling</span><span class="p">,</span>
-    <span class="n">run_own_md</span><span class="p">,</span>
+    <span class="n">report_state</span><span class="p">,</span>
+    <span class="n">size_warnings</span><span class="p">,</span>
+    <span class="n">state_data</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tabulate</span><span class="w"> </span><span class="kn">import</span> <span class="n">tabulate</span>
 
@@ -550,6 +559,10 @@
 
 <span class="c1">#: The kspace styles with conducting boundaries, for which the formula holds</span>
 <span class="n">EWALD_STYLES</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"ewald"</span><span class="p">,</span> <span class="s2">"pppm"</span><span class="p">)</span>
+<span class="c1">#: e·Å in debye</span>
+<span class="n">DEBYE</span> <span class="o">=</span> <span class="mf">4.80320471</span>
+<span class="c1">#: The most frames used for the mean molecular dipole</span>
+<span class="n">MAX_DIPOLE_FRAMES</span> <span class="o">=</span> <span class="mi">200</span>
 
 
 <div class="viewcode-block" id="hill_formula">
@@ -574,9 +587,6 @@
 
 <span class="sd">    Attributes</span>
 <span class="sd">    ----------</span>
-<span class="sd">    subflowchart : seamm.Flowchart</span>
-<span class="sd">        The MD to run, when this step runs its own MD.</span>
-
 <span class="sd">    parameters : DielectricConstantParameters</span>
 <span class="sd">        The control parameters for Dielectric Constant.</span>
 <span class="sd">    """</span>
@@ -585,15 +595,10 @@
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">flowchart</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
         <span class="n">title</span><span class="o">=</span><span class="s2">"Dielectric Constant"</span><span class="p">,</span>
-        <span class="n">namespace</span><span class="o">=</span><span class="s2">"org.molssi.seamm"</span><span class="p">,</span>
         <span class="n">extension</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
         <span class="n">logger</span><span class="o">=</span><span class="n">logger</span><span class="p">,</span>
     <span class="p">):</span>
         <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Creating Dielectric Constant </span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">subflowchart</span> <span class="o">=</span> <span class="n">seamm</span><span class="o">.</span><span class="n">Flowchart</span><span class="p">(</span>
-            <span class="n">parent</span><span class="o">=</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"Dielectric Constant"</span><span class="p">,</span> <span class="n">namespace</span><span class="o">=</span><span class="n">namespace</span>
-        <span class="p">)</span>
-
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
             <span class="n">flowchart</span><span class="o">=</span><span class="n">flowchart</span><span class="p">,</span>
             <span class="n">title</span><span class="o">=</span><span class="s2">"Dielectric Constant"</span><span class="p">,</span>
@@ -604,7 +609,6 @@
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_metadata</span> <span class="o">=</span> <span class="n">dielectric_constant_step</span><span class="o">.</span><span class="n">metadata</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">parameters</span> <span class="o">=</span> <span class="n">dielectric_constant_step</span><span class="o">.</span><span class="n">DielectricConstantParameters</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_reset</span><span class="p">()</span>
 
     <span class="nd">@property</span>
@@ -628,8 +632,6 @@
         <span class="n">parser_name</span> <span class="o">=</span> <span class="s2">"dielectric-constant-step"</span>
         <span class="n">parser</span> <span class="o">=</span> <span class="n">seamm_util</span><span class="o">.</span><span class="n">getParser</span><span class="p">()</span>
 
-        <span class="bp">self</span><span class="o">.</span><span class="n">subflowchart</span><span class="o">.</span><span class="n">_parser</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">flowchart</span><span class="o">.</span><span class="n">_parser</span>
-
         <span class="n">parser_exists</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">parser_name</span><span class="p">)</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">create_parser</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">parser_name</span><span class="p">)</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">parser_exists</span><span class="p">:</span>
@@ -639,12 +641,6 @@
                 <span class="n">action</span><span class="o">=</span><span class="s2">"store_true"</span><span class="p">,</span>
                 <span class="n">help</span><span class="o">=</span><span class="s2">"whether to write out html files for graphs, etc."</span><span class="p">,</span>
             <span class="p">)</span>
-
-        <span class="bp">self</span><span class="o">.</span><span class="n">subflowchart</span><span class="o">.</span><span class="n">reset_visited</span><span class="p">()</span>
-        <span class="n">node</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">subflowchart</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="s2">"1"</span><span class="p">)</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
-        <span class="k">while</span> <span class="n">node</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">node</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">create_parser</span><span class="p">()</span>
-
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">next</span><span class="p">()</span></div>
 
 
@@ -661,25 +657,12 @@
         <span class="k">else</span><span class="p">:</span>
             <span class="n">what</span> <span class="o">+=</span> <span class="n">P</span><span class="p">[</span><span class="s2">"dipole of"</span><span class="p">]</span>
 
-        <span class="n">source</span> <span class="o">=</span> <span class="n">P</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"md source"</span><span class="p">,</span> <span class="n">run_own_md</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">source</span> <span class="o">==</span> <span class="n">run_own_md</span><span class="p">:</span>
-            <span class="n">text</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"Calculate </span><span class="si">{</span><span class="n">what</span><span class="si">}</span><span class="s2">, from </span><span class="si">{</span><span class="n">P</span><span class="p">[</span><span class="s1">'nruns'</span><span class="p">]</span><span class="si">}</span><span class="s2"> runs of the MD below.</span><span class="se">\n\n</span><span class="s2">"</span>
+        <span class="n">source</span> <span class="o">=</span> <span class="n">P</span><span class="p">[</span><span class="s2">"md source"</span><span class="p">]</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"Calculate </span><span class="si">{</span><span class="n">what</span><span class="si">}</span><span class="s2">, from "</span>
+        <span class="k">if</span> <span class="n">source</span> <span class="o">==</span> <span class="n">read_files</span><span class="p">:</span>
+            <span class="n">text</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">"the MD in </span><span class="si">{</span><span class="n">P</span><span class="p">[</span><span class="s1">'md files'</span><span class="p">]</span><span class="si">}</span><span class="s2">."</span>
         <span class="k">else</span><span class="p">:</span>
-            <span class="n">text</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"Calculate </span><span class="si">{</span><span class="n">what</span><span class="si">}</span><span class="s2">, from "</span>
-            <span class="k">if</span> <span class="n">source</span> <span class="o">==</span> <span class="n">read_files</span><span class="p">:</span>
-                <span class="n">text</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">"the MD in </span><span class="si">{</span><span class="n">P</span><span class="p">[</span><span class="s1">'md files'</span><span class="p">]</span><span class="si">}</span><span class="s2">.</span><span class="se">\n\n</span><span class="s2">"</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="n">text</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">source</span><span class="si">}</span><span class="s2"> earlier in the flowchart.</span><span class="se">\n\n</span><span class="s2">"</span>
-            <span class="n">short</span> <span class="o">=</span> <span class="kc">True</span>
-
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">short</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">subflowchart</span><span class="o">.</span><span class="n">root_directory</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">flowchart</span><span class="o">.</span><span class="n">root_directory</span>
-            <span class="n">node</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">subflowchart</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="s2">"1"</span><span class="p">)</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
-            <span class="k">while</span> <span class="n">node</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="n">text</span> <span class="o">+=</span> <span class="n">__</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">description_text</span><span class="p">())</span><span class="o">.</span><span class="fm">__str__</span><span class="p">()</span>
-                <span class="n">text</span> <span class="o">+=</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span>
-                <span class="n">node</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
-
+            <span class="n">text</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">source</span><span class="si">}</span><span class="s2"> earlier in the flowchart."</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">header</span> <span class="o">+</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span> <span class="o">+</span> <span class="n">__</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span> <span class="o">*</span> <span class="s2">" "</span><span class="p">)</span><span class="o">.</span><span class="fm">__str__</span><span class="p">()</span></div>
 
 
@@ -693,18 +676,9 @@
         <span class="n">P</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">current_values_to_dict</span><span class="p">(</span>
             <span class="n">context</span><span class="o">=</span><span class="n">seamm</span><span class="o">.</span><span class="n">flowchart_variables</span><span class="o">.</span><span class="n">_data</span>
         <span class="p">)</span>
-        <span class="n">printer</span><span class="o">.</span><span class="n">important</span><span class="p">(</span><span class="n">__</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">description_text</span><span class="p">(</span><span class="n">P</span><span class="p">,</span> <span class="n">short</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span> <span class="n">indent</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">indent</span><span class="p">))</span>
+        <span class="n">printer</span><span class="o">.</span><span class="n">important</span><span class="p">(</span><span class="n">__</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">description_text</span><span class="p">(</span><span class="n">P</span><span class="p">),</span> <span class="n">indent</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">indent</span><span class="p">))</span>
 
         <span class="n">_</span><span class="p">,</span> <span class="n">configuration</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_system_configuration</span><span class="p">()</span>
-        <span class="k">if</span> <span class="p">(</span>
-            <span class="n">P</span><span class="p">[</span><span class="s2">"md source"</span><span class="p">]</span> <span class="o">==</span> <span class="n">run_own_md</span>
-            <span class="ow">and</span> <span class="n">configuration</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-            <span class="ow">and</span> <span class="n">configuration</span><span class="o">.</span><span class="n">periodicity</span> <span class="o">!=</span> <span class="mi">3</span>
-        <span class="p">):</span>
-            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-                <span class="s2">"The Dielectric Constant step needs a periodic system: the "</span>
-                <span class="s2">"fluctuation formula is for a periodic cell."</span>
-            <span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">references</span><span class="o">.</span><span class="n">cite</span><span class="p">(</span>
             <span class="n">raw</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_bibliography</span><span class="p">[</span><span class="s2">"Neumann1983"</span><span class="p">],</span>
@@ -714,23 +688,15 @@
             <span class="n">note</span><span class="o">=</span><span class="s2">"The dielectric constant from the fluctuations of the dipole."</span><span class="p">,</span>
         <span class="p">)</span>
 
-        <span class="n">handlers</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_quiet_handlers</span><span class="p">()</span>
-        <span class="k">try</span><span class="p">:</span>
-            <span class="k">if</span> <span class="n">P</span><span class="p">[</span><span class="s2">"md source"</span><span class="p">]</span> <span class="o">==</span> <span class="n">run_own_md</span><span class="p">:</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_run_own_md</span><span class="p">(</span><span class="n">P</span><span class="p">)</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">paths</span> <span class="o">=</span> <span class="n">md_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">P</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"all/position"</span><span class="p">)</span>
-                <span class="n">printer</span><span class="o">.</span><span class="n">job</span><span class="p">(</span>
-                    <span class="n">__</span><span class="p">(</span>
-                        <span class="sa">f</span><span class="s2">"Analyzing </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">)</span><span class="si">}</span><span class="s2"> MD run"</span>
-                        <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="s1">'s'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}</span><span class="s2">: "</span>
-                        <span class="o">+</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">),</span>
-                        <span class="n">indent</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">indent</span> <span class="o">+</span> <span class="mi">4</span> <span class="o">*</span> <span class="s2">" "</span><span class="p">,</span>
-                    <span class="p">)</span>
-                <span class="p">)</span>
-        <span class="k">finally</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_restore_handlers</span><span class="p">(</span><span class="n">handlers</span><span class="p">)</span>
-
+        <span class="bp">self</span><span class="o">.</span><span class="n">paths</span> <span class="o">=</span> <span class="n">md_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">P</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"all/position"</span><span class="p">)</span>
+        <span class="n">printer</span><span class="o">.</span><span class="n">job</span><span class="p">(</span>
+            <span class="n">__</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"Analyzing </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">)</span><span class="si">}</span><span class="s2"> MD run"</span>
+                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="s1">'s'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}</span><span class="s2">: "</span>
+                <span class="o">+</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">),</span>
+                <span class="n">indent</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">indent</span> <span class="o">+</span> <span class="mi">4</span> <span class="o">*</span> <span class="s2">" "</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
         <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"No MD run finished, so there is nothing to analyze."</span><span class="p">)</span>
 
@@ -738,108 +704,16 @@
         <span class="k">return</span> <span class="n">next_node</span></div>
 
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_quiet_handlers</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Send only job-level output to job.out and the screen while MD runs."""</span>
-        <span class="n">result</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="k">for</span> <span class="n">handler</span> <span class="ow">in</span> <span class="n">job</span><span class="o">.</span><span class="n">handlers</span><span class="p">:</span>
-            <span class="k">if</span> <span class="p">(</span>
-                <span class="nb">isinstance</span><span class="p">(</span><span class="n">handler</span><span class="p">,</span> <span class="n">logging</span><span class="o">.</span><span class="n">FileHandler</span><span class="p">)</span>
-                <span class="ow">and</span> <span class="s2">"job.out"</span> <span class="ow">in</span> <span class="n">handler</span><span class="o">.</span><span class="n">baseFilename</span>
-            <span class="p">)</span> <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">handler</span><span class="p">,</span> <span class="n">logging</span><span class="o">.</span><span class="n">StreamHandler</span><span class="p">):</span>
-                <span class="n">result</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">handler</span><span class="p">,</span> <span class="n">handler</span><span class="o">.</span><span class="n">level</span><span class="p">))</span>
-                <span class="n">handler</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">printing</span><span class="o">.</span><span class="n">JOB</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">result</span>
-
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_restore_handlers</span><span class="p">(</span><span class="n">handlers</span><span class="p">):</span>
-        <span class="k">for</span> <span class="n">handler</span><span class="p">,</span> <span class="n">level</span> <span class="ow">in</span> <span class="n">handlers</span><span class="p">:</span>
-            <span class="n">handler</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">level</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_run_own_md</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">P</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Run the MD in the sub-flowchart several times, keeping each run's file."""</span>
-        <span class="n">changes</span><span class="p">,</span> <span class="n">missing</span> <span class="o">=</span> <span class="n">request_sampling</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">subflowchart</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">md_requirements</span><span class="p">(</span><span class="n">P</span><span class="p">))</span>
-        <span class="k">for</span> <span class="n">change</span> <span class="ow">in</span> <span class="n">changes</span><span class="p">:</span>
-            <span class="n">printer</span><span class="o">.</span><span class="n">job</span><span class="p">(</span><span class="n">__</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Note: </span><span class="si">{</span><span class="n">change</span><span class="si">}</span><span class="s2">."</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">indent</span> <span class="o">+</span> <span class="mi">4</span> <span class="o">*</span> <span class="s2">" "</span><span class="p">))</span>
-        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">missing</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-                <span class="s2">"The MD in the sub-flowchart cannot provide what is needed: "</span>
-                <span class="o">+</span> <span class="s2">" "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">missing</span><span class="p">)</span>
-            <span class="p">)</span>
-
-        <span class="n">first_node</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">subflowchart</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="s2">"1"</span><span class="p">)</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
-        <span class="k">if</span> <span class="n">first_node</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-                <span class="s2">"The sub-flowchart of the Dielectric Constant step is empty."</span>
-            <span class="p">)</span>
-        <span class="n">node</span> <span class="o">=</span> <span class="n">first_node</span>
-        <span class="k">while</span> <span class="n">node</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">node</span><span class="o">.</span><span class="n">all_options</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">all_options</span>
-            <span class="n">node</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">subflowchart</span><span class="o">.</span><span class="n">executor</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">flowchart</span><span class="o">.</span><span class="n">executor</span>
-
-        <span class="n">nruns</span> <span class="o">=</span> <span class="n">P</span><span class="p">[</span><span class="s2">"nruns"</span><span class="p">]</span>
-        <span class="n">fmt_run</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"0</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">nruns</span><span class="p">))</span><span class="si">}</span><span class="s2">"</span>
-        <span class="k">for</span> <span class="n">run</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">nruns</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
-            <span class="n">run_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">directory</span><span class="p">)</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">"run_</span><span class="si">{</span><span class="n">run</span><span class="si">:{</span><span class="n">fmt_run</span><span class="si">}}</span><span class="s2">"</span>
-            <span class="n">run_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-
-            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
-                <span class="n">job</span><span class="o">.</span><span class="n">removeHandler</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span><span class="p">)</span>
-            <span class="n">path</span> <span class="o">=</span> <span class="n">run_dir</span> <span class="o">/</span> <span class="s2">"Run.out"</span>
-            <span class="n">path</span><span class="o">.</span><span class="n">unlink</span><span class="p">(</span><span class="n">missing_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">FileHandler</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">printing</span><span class="o">.</span><span class="n">NORMAL</span><span class="p">)</span>
-            <span class="n">formatter</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span><span class="n">fmt</span><span class="o">=</span><span class="s2">"</span><span class="si">{message:s}</span><span class="s2">"</span><span class="p">,</span> <span class="n">style</span><span class="o">=</span><span class="s2">"{"</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">formatter</span><span class="p">)</span>
-            <span class="n">job</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span><span class="p">)</span>
-
-            <span class="bp">self</span><span class="o">.</span><span class="n">flowchart</span><span class="o">.</span><span class="n">reset_visited</span><span class="p">()</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">set_subids</span><span class="p">((</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">_id</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"run_</span><span class="si">{</span><span class="n">run</span><span class="si">:{</span><span class="n">fmt_run</span><span class="si">}}</span><span class="s2">"</span><span class="p">))</span>
-
-            <span class="n">node</span> <span class="o">=</span> <span class="n">first_node</span>
-            <span class="k">try</span><span class="p">:</span>
-                <span class="k">while</span> <span class="n">node</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                    <span class="n">node</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
-            <span class="k">except</span> <span class="ne">DeprecationWarning</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                <span class="n">printer</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">Deprecation warning: "</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
-                <span class="n">traceback</span><span class="o">.</span><span class="n">print_exc</span><span class="p">(</span><span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>
-                <span class="n">traceback</span><span class="o">.</span><span class="n">print_exc</span><span class="p">(</span><span class="n">file</span><span class="o">=</span><span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
-            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                <span class="n">printer</span><span class="o">.</span><span class="n">job</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Caught exception in run </span><span class="si">{</span><span class="n">run</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-                <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">run_dir</span> <span class="o">/</span> <span class="s2">"stderr.out"</span><span class="p">,</span> <span class="s2">"a"</span><span class="p">)</span> <span class="k">as</span> <span class="n">fd</span><span class="p">:</span>
-                    <span class="n">traceback</span><span class="o">.</span><span class="n">print_exc</span><span class="p">(</span><span class="n">file</span><span class="o">=</span><span class="n">fd</span><span class="p">)</span>
-                <span class="k">if</span> <span class="s2">"continue"</span> <span class="ow">in</span> <span class="n">P</span><span class="p">[</span><span class="s2">"errors"</span><span class="p">]:</span>
-                    <span class="k">continue</span>
-                <span class="k">elif</span> <span class="s2">"exit"</span> <span class="ow">in</span> <span class="n">P</span><span class="p">[</span><span class="s2">"errors"</span><span class="p">]:</span>
-                    <span class="k">break</span>
-                <span class="k">else</span><span class="p">:</span>
-                    <span class="k">raise</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_read_run</span><span class="p">(</span><span class="n">run</span><span class="p">,</span> <span class="n">run_dir</span><span class="p">))</span>
-
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
-            <span class="n">job</span><span class="o">.</span><span class="n">removeHandler</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_file_handler</span> <span class="o">=</span> <span class="kc">None</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_read_run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">run</span><span class="p">,</span> <span class="n">run_dir</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""The md.h5md of one run of the sub-flowchart with the positions."""</span>
-        <span class="n">paths</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">run_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"**/md.h5md"</span><span class="p">)):</span>
-            <span class="k">with</span> <span class="n">open_md</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="k">as</span> <span class="n">md</span><span class="p">:</span>
-                <span class="k">if</span> <span class="n">md</span><span class="o">.</span><span class="n">has_particles</span><span class="p">(</span><span class="s2">"position"</span><span class="p">):</span>
-                    <span class="n">paths</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">paths</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"There are no positions for run </span><span class="si">{</span><span class="n">run</span><span class="si">}</span><span class="s2"> in </span><span class="si">{</span><span class="n">run_dir</span><span class="si">}</span><span class="s2">."</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">paths</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-
     <span class="c1"># ------------------------------------------------------------------</span>
     <span class="c1"># The analysis</span>
     <span class="c1"># ------------------------------------------------------------------</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">configuration</span><span class="p">,</span> <span class="n">atoms</span><span class="p">,</span> <span class="n">charges</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""The dipole in each frame, the interval between frames (ps), and the</span>
-<span class="sd">        mean volume (Å³) and temperature (K) of one run."""</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">configuration</span><span class="p">,</span> <span class="n">molecules</span><span class="p">,</span> <span class="n">charges</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""One run: the dipole of the cell in each frame, the interval between</span>
+<span class="sd">        frames (ps), the mean volume (Å³) and temperature (K), the mean dipole of a</span>
+<span class="sd">        molecule (e·Å), the kspace style, and whether the run is isotropic."""</span>
+        <span class="n">atoms</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">molecules</span><span class="p">)</span>
+        <span class="n">starts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">([</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">m</span><span class="p">)</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">molecules</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]])</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="n">charges</span><span class="p">[</span><span class="n">atoms</span><span class="p">]</span>
         <span class="k">with</span> <span class="n">open_md</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="k">as</span> <span class="n">md</span><span class="p">:</span>
             <span class="k">if</span> <span class="ow">not</span> <span class="n">md</span><span class="o">.</span><span class="n">periodic</span><span class="p">:</span>
                 <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"The MD in </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2"> is not periodic."</span><span class="p">)</span>
@@ -853,15 +727,47 @@
                 <span class="k">else</span> <span class="kc">None</span>
             <span class="p">)</span>
             <span class="n">T</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">md</span><span class="o">.</span><span class="n">observable</span><span class="p">(</span><span class="s2">"temperature"</span><span class="p">,</span> <span class="n">units</span><span class="o">=</span><span class="s2">"K"</span><span class="p">)</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span>
+            <span class="n">kspace</span> <span class="o">=</span> <span class="n">md</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"kspace_style"</span><span class="p">)</span>
+            <span class="n">isotropic</span> <span class="o">=</span> <span class="n">isotropy</span><span class="p">(</span><span class="n">md</span><span class="p">)</span>
             <span class="k">with</span> <span class="n">warnings</span><span class="o">.</span><span class="n">catch_warnings</span><span class="p">():</span>
                 <span class="n">warnings</span><span class="o">.</span><span class="n">simplefilter</span><span class="p">(</span><span class="s2">"ignore"</span><span class="p">)</span>
                 <span class="n">u</span> <span class="o">=</span> <span class="n">md</span><span class="o">.</span><span class="n">universe</span><span class="p">(</span><span class="n">configuration</span><span class="p">)</span>
+            <span class="n">n_frames</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">trajectory</span><span class="p">)</span>
+            <span class="n">every</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">n_frames</span> <span class="o">//</span> <span class="n">MAX_DIPOLE_FRAMES</span><span class="p">)</span>
             <span class="n">M</span> <span class="o">=</span> <span class="p">[]</span>
             <span class="n">V</span> <span class="o">=</span> <span class="p">[]</span>
-            <span class="k">for</span> <span class="n">ts</span> <span class="ow">in</span> <span class="n">u</span><span class="o">.</span><span class="n">trajectory</span><span class="p">:</span>
-                <span class="n">M</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cell_dipole</span><span class="p">(</span><span class="n">ts</span><span class="o">.</span><span class="n">positions</span><span class="p">,</span> <span class="n">atoms</span><span class="p">,</span> <span class="n">charges</span><span class="p">))</span>
+            <span class="n">mu</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">ts</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">u</span><span class="o">.</span><span class="n">trajectory</span><span class="p">):</span>
+                <span class="n">M</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cell_dipole</span><span class="p">(</span><span class="n">ts</span><span class="o">.</span><span class="n">positions</span><span class="p">,</span> <span class="n">atoms</span><span class="p">,</span> <span class="n">q</span><span class="p">))</span>
                 <span class="n">V</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ts</span><span class="o">.</span><span class="n">volume</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">M</span><span class="p">),</span> <span class="n">dt</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">V</span><span class="p">)),</span> <span class="n">T</span>
+                <span class="k">if</span> <span class="n">i</span> <span class="o">%</span> <span class="n">every</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="c1"># The positions are unwrapped, so each molecule is whole</span>
+                    <span class="n">dipoles</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">add</span><span class="o">.</span><span class="n">reduceat</span><span class="p">(</span><span class="n">q</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">ts</span><span class="o">.</span><span class="n">positions</span><span class="p">[</span><span class="n">atoms</span><span class="p">],</span> <span class="n">starts</span><span class="p">)</span>
+                    <span class="n">mu</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">dipoles</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"M"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">M</span><span class="p">),</span>
+            <span class="s2">"dt"</span><span class="p">:</span> <span class="n">dt</span><span class="p">,</span>
+            <span class="s2">"V"</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">V</span><span class="p">)),</span>
+            <span class="s2">"T"</span><span class="p">:</span> <span class="n">T</span><span class="p">,</span>
+            <span class="s2">"mu"</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">mu</span><span class="p">)),</span>
+            <span class="s2">"kspace"</span><span class="p">:</span> <span class="n">kspace</span><span class="p">,</span>
+            <span class="s2">"isotropic"</span><span class="p">:</span> <span class="n">isotropic</span><span class="p">,</span>
+        <span class="p">}</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_sample</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">n_molecules</span><span class="p">,</span> <span class="n">mu</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""ε, its diagonal components, the Kirkwood factor and |⟨M⟩| (e·Å) of one</span>
+<span class="sd">        run or block."""</span>
+        <span class="n">mean</span> <span class="o">=</span> <span class="n">M</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">variance</span> <span class="o">=</span> <span class="n">M</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">factor</span> <span class="o">=</span> <span class="n">_factor</span><span class="p">(</span><span class="n">V</span><span class="p">,</span> <span class="n">T</span><span class="p">)</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">variance</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"epsilon"</span><span class="p">:</span> <span class="mf">1.0</span> <span class="o">+</span> <span class="n">factor</span> <span class="o">*</span> <span class="n">total</span><span class="p">,</span>
+            <span class="s2">"components"</span><span class="p">:</span> <span class="mf">1.0</span> <span class="o">+</span> <span class="mf">3.0</span> <span class="o">*</span> <span class="n">factor</span> <span class="o">*</span> <span class="n">variance</span><span class="p">,</span>
+            <span class="s2">"g_K"</span><span class="p">:</span> <span class="n">total</span> <span class="o">/</span> <span class="p">(</span><span class="n">n_molecules</span> <span class="o">*</span> <span class="n">mu</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span> <span class="k">if</span> <span class="n">mu</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="s2">"nan"</span><span class="p">),</span>
+            <span class="s2">"M"</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">mean</span><span class="p">)),</span>
+        <span class="p">}</span>
 
 <div class="viewcode-block" id="DielectricConstant.analyze">
 <a class="viewcode-back" href="../../api/dielectric_constant_step.html#dielectric_constant_step.dielectric_constant.DielectricConstant.analyze">[docs]</a>
@@ -874,7 +780,6 @@
 
         <span class="k">with</span> <span class="n">open_md</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="k">as</span> <span class="n">md</span><span class="p">:</span>
             <span class="n">charges</span> <span class="o">=</span> <span class="n">md</span><span class="o">.</span><span class="n">charges</span><span class="p">(</span><span class="s2">"all"</span><span class="p">)</span>
-            <span class="n">kspace</span> <span class="o">=</span> <span class="n">md</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"kspace_style"</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">charges</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
                 <span class="sa">f</span><span class="s2">"'</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">title</span><span class="si">}</span><span class="s2">': the MD has no fixed charges, as with a "</span>
@@ -888,9 +793,9 @@
             <span class="n">mode</span> <span class="o">==</span> <span class="s2">"automatic"</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">classes</span><span class="p">[</span><span class="s2">"ions"</span><span class="p">])</span> <span class="o">&gt;</span> <span class="mi">0</span>
         <span class="p">)</span>
         <span class="n">chosen</span> <span class="o">=</span> <span class="n">classes</span><span class="p">[</span><span class="s2">"neutral"</span><span class="p">]</span> <span class="k">if</span> <span class="n">neutral_only</span> <span class="k">else</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">molecules</span><span class="p">)))</span>
+        <span class="n">chosen</span> <span class="o">=</span> <span class="p">[</span><span class="n">m</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">chosen</span> <span class="k">if</span> <span class="n">m</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">classes</span><span class="p">[</span><span class="s2">"other"</span><span class="p">]]</span>
         <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">chosen</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"'</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">title</span><span class="si">}</span><span class="s2">': there are no neutral molecules."</span><span class="p">)</span>
-        <span class="n">atoms</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">chosen</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">molecules</span><span class="p">[</span><span class="n">m</span><span class="p">]))</span>
 
         <span class="n">notes</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="n">names</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span>
@@ -914,69 +819,89 @@
                 <span class="s2">"not an integer, which is a problem with the charges; they are "</span>
                 <span class="s2">"left out."</span>
             <span class="p">)</span>
-            <span class="n">atoms</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
-                <span class="p">[</span>
-                    <span class="n">i</span>
-                    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">atoms</span>
-                    <span class="k">if</span> <span class="nb">all</span><span class="p">(</span><span class="n">i</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">molecules</span><span class="p">[</span><span class="n">m</span><span class="p">]</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">classes</span><span class="p">[</span><span class="s2">"other"</span><span class="p">])</span>
-                <span class="p">]</span>
-            <span class="p">)</span>
-        <span class="k">if</span> <span class="n">kspace</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">notes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="s2">"The MD does not record its electrostatics. The formula assumes Ewald "</span>
-                <span class="s2">"or PPPM summation with conducting boundaries."</span>
-            <span class="p">)</span>
-        <span class="k">elif</span> <span class="ow">not</span> <span class="n">kspace</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">EWALD_STYLES</span><span class="p">):</span>
-            <span class="n">notes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">"The MD used kspace_style '</span><span class="si">{</span><span class="n">kspace</span><span class="si">}</span><span class="s2">'. The formula holds for Ewald or "</span>
-                <span class="s2">"PPPM summation with conducting boundaries, so the value may be "</span>
-                <span class="s2">"wrong."</span>
-            <span class="p">)</span>
 
-        <span class="n">runs</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_read</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">configuration</span><span class="p">,</span> <span class="n">atoms</span><span class="p">,</span> <span class="n">charges</span><span class="p">[</span><span class="n">atoms</span><span class="p">])</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">]</span>
+        <span class="n">chosen_molecules</span> <span class="o">=</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">molecules</span><span class="p">[</span><span class="n">m</span><span class="p">])</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">chosen</span><span class="p">]</span>
+        <span class="n">runs</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_read</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">configuration</span><span class="p">,</span> <span class="n">chosen_molecules</span><span class="p">,</span> <span class="n">charges</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">paths</span>
+        <span class="p">]</span>
         <span class="n">nruns</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">runs</span><span class="p">)</span>
-        <span class="n">n_blocks</span> <span class="o">=</span> <span class="n">P</span><span class="p">[</span><span class="s2">"number of blocks"</span><span class="p">]</span> <span class="k">if</span> <span class="n">nruns</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="mi">1</span>
-        <span class="k">if</span> <span class="n">nruns</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">P</span><span class="p">[</span><span class="s2">"md source"</span><span class="p">]</span> <span class="o">==</span> <span class="n">run_own_md</span><span class="p">:</span>
-            <span class="n">n_blocks</span> <span class="o">=</span> <span class="mi">1</span>
-        <span class="n">fits</span> <span class="o">=</span> <span class="p">[</span><span class="n">dielectric_constant</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">n_blocks</span><span class="o">=</span><span class="n">n_blocks</span><span class="p">)</span> <span class="k">for</span> <span class="n">M</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">T</span> <span class="ow">in</span> <span class="n">runs</span><span class="p">]</span>
-        <span class="n">values</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">f</span><span class="p">[</span><span class="s2">"epsilon"</span><span class="p">]</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">fits</span><span class="p">])</span>
-        <span class="n">epsilon</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">values</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span>
-        <span class="k">if</span> <span class="n">nruns</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
-            <span class="n">stderr</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">values</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">ddof</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">nruns</span><span class="p">))</span>
-            <span class="n">how</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"the standard error over the </span><span class="si">{</span><span class="n">nruns</span><span class="si">}</span><span class="s2"> runs"</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">stderr</span> <span class="o">=</span> <span class="n">fits</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"stderr"</span><span class="p">]</span>
-            <span class="n">how</span> <span class="o">=</span> <span class="p">(</span>
-                <span class="sa">f</span><span class="s2">"from </span><span class="si">{</span><span class="n">fits</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s1">'n_blocks'</span><span class="p">]</span><span class="si">}</span><span class="s2"> blocks of the run"</span>
-                <span class="k">if</span> <span class="n">stderr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
-                <span class="k">else</span> <span class="s2">"no error estimate: use several runs or blocks"</span>
-            <span class="p">)</span>
-        <span class="n">T</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">([</span><span class="n">r</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">runs</span><span class="p">]))</span>
-        <span class="n">V</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">([</span><span class="n">r</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">runs</span><span class="p">]))</span>
-        <span class="n">dt</span> <span class="o">=</span> <span class="n">runs</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span>
-        <span class="n">n_frames</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">runs</span><span class="p">)</span>
+        <span class="n">n_molecules</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">chosen</span><span class="p">)</span>
 
+        <span class="c1"># The independent samples: the runs, or blocks of a single run</span>
+        <span class="k">if</span> <span class="n">nruns</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">source</span> <span class="o">=</span> <span class="s2">"runs"</span>
+            <span class="n">samples</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_sample</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s2">"M"</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s2">"V"</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s2">"T"</span><span class="p">],</span> <span class="n">n_molecules</span><span class="p">,</span> <span class="n">r</span><span class="p">[</span><span class="s2">"mu"</span><span class="p">])</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">runs</span>
+            <span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">source</span> <span class="o">=</span> <span class="s2">"blocks"</span>
+            <span class="n">run</span> <span class="o">=</span> <span class="n">runs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">n_blocks</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">P</span><span class="p">[</span><span class="s2">"number of blocks"</span><span class="p">]),</span> <span class="nb">len</span><span class="p">(</span><span class="n">run</span><span class="p">[</span><span class="s2">"M"</span><span class="p">])</span> <span class="o">//</span> <span class="mi">2</span><span class="p">))</span>
+            <span class="n">samples</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_sample</span><span class="p">(</span><span class="n">block</span><span class="p">,</span> <span class="n">run</span><span class="p">[</span><span class="s2">"V"</span><span class="p">],</span> <span class="n">run</span><span class="p">[</span><span class="s2">"T"</span><span class="p">],</span> <span class="n">n_molecules</span><span class="p">,</span> <span class="n">run</span><span class="p">[</span><span class="s2">"mu"</span><span class="p">])</span>
+                <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="n">np</span><span class="o">.</span><span class="n">array_split</span><span class="p">(</span><span class="n">run</span><span class="p">[</span><span class="s2">"M"</span><span class="p">],</span> <span class="n">n_blocks</span><span class="p">)</span>
+            <span class="p">]</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">estimate</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+            <span class="n">values</span> <span class="o">=</span> <span class="p">[</span><span class="n">s</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">*</span> <span class="n">scale</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">]</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">values</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">Estimate</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">values</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="kc">None</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">source</span><span class="o">=</span><span class="n">source</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">Estimate</span><span class="o">.</span><span class="n">from_samples</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="n">source</span><span class="o">=</span><span class="n">source</span><span class="p">)</span>
+
+        <span class="c1"># ε from the whole of each run, the error from the samples</span>
+        <span class="n">fits</span> <span class="o">=</span> <span class="p">[</span><span class="n">dielectric_constant</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s2">"M"</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s2">"V"</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s2">"T"</span><span class="p">],</span> <span class="n">n_blocks</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">runs</span><span class="p">]</span>
+        <span class="n">epsilon</span> <span class="o">=</span> <span class="n">estimate</span><span class="p">(</span><span class="s2">"epsilon"</span><span class="p">)</span>
+        <span class="n">epsilon</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">([</span><span class="n">f</span><span class="p">[</span><span class="s2">"epsilon"</span><span class="p">]</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">fits</span><span class="p">]))</span>
+        <span class="n">g_K</span> <span class="o">=</span> <span class="n">estimate</span><span class="p">(</span><span class="s2">"g_K"</span><span class="p">)</span>
+        <span class="n">M_mean</span> <span class="o">=</span> <span class="n">estimate</span><span class="p">(</span><span class="s2">"M"</span><span class="p">,</span> <span class="n">DEBYE</span><span class="p">)</span>
+        <span class="n">mu</span> <span class="o">=</span> <span class="n">Estimate</span><span class="o">.</span><span class="n">from_samples</span><span class="p">([</span><span class="n">r</span><span class="p">[</span><span class="s2">"mu"</span><span class="p">]</span> <span class="o">*</span> <span class="n">DEBYE</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">runs</span><span class="p">])</span>
+        <span class="n">components</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">s</span><span class="p">[</span><span class="s2">"components"</span><span class="p">]</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">samples</span><span class="p">])</span>
+        <span class="n">check</span> <span class="o">=</span> <span class="n">component_check</span><span class="p">(</span><span class="n">components</span><span class="p">,</span> <span class="n">names</span><span class="o">=</span><span class="p">[</span><span class="s2">"ε_xx"</span><span class="p">,</span> <span class="s2">"ε_yy"</span><span class="p">,</span> <span class="s2">"ε_zz"</span><span class="p">])</span>
+        <span class="n">isotropic</span><span class="p">,</span> <span class="n">why</span> <span class="o">=</span> <span class="n">runs</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"isotropic"</span><span class="p">]</span>
+
+        <span class="n">dt</span> <span class="o">=</span> <span class="n">runs</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"dt"</span><span class="p">]</span>
         <span class="n">tau</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="k">try</span><span class="p">:</span>
-            <span class="n">acf</span> <span class="o">=</span> <span class="n">dipole_correlation</span><span class="p">(</span><span class="n">runs</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">],</span> <span class="n">dt</span> <span class="ow">or</span> <span class="mf">1.0</span><span class="p">)</span>
+            <span class="n">acf</span> <span class="o">=</span> <span class="n">dipole_correlation</span><span class="p">(</span><span class="n">runs</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"M"</span><span class="p">],</span> <span class="n">dt</span> <span class="ow">or</span> <span class="mf">1.0</span><span class="p">)</span>
             <span class="n">tau</span> <span class="o">=</span> <span class="n">acf</span><span class="p">[</span><span class="s2">"tau"</span><span class="p">]</span>
         <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
             <span class="n">acf</span> <span class="o">=</span> <span class="kc">None</span>
             <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">"No autocorrelation of the dipole: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">n_frames</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s2">"M"</span><span class="p">])</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">runs</span><span class="p">)</span>
 
-        <span class="n">table</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s2">"Property"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"ε"</span><span class="p">,</span> <span class="s2">"Dipole correlation time"</span><span class="p">,</span> <span class="s2">"Temperature"</span><span class="p">,</span> <span class="s2">"Volume"</span><span class="p">],</span>
-            <span class="s2">"Value"</span><span class="p">:</span> <span class="p">[</span>
-                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">epsilon</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
-                <span class="s2">""</span> <span class="k">if</span> <span class="n">tau</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">tau</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
-                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">T</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
-                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">V</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
-            <span class="p">],</span>
-            <span class="s2">"±"</span><span class="p">:</span> <span class="p">[</span><span class="s2">""</span> <span class="k">if</span> <span class="n">stderr</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">stderr</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="s2">""</span><span class="p">,</span> <span class="s2">""</span><span class="p">,</span> <span class="s2">""</span><span class="p">],</span>
-            <span class="s2">"Units"</span><span class="p">:</span> <span class="p">[</span><span class="s2">""</span><span class="p">,</span> <span class="s2">"ps"</span><span class="p">,</span> <span class="s2">"K"</span><span class="p">,</span> <span class="s2">"Å^3"</span><span class="p">],</span>
-        <span class="p">}</span>
+        <span class="n">table</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"Property"</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">"Value"</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">"± (95%)"</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">"Units"</span><span class="p">:</span> <span class="p">[]}</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">row</span><span class="p">(</span><span class="n">label</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">units</span><span class="o">=</span><span class="s2">""</span><span class="p">):</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">Estimate</span><span class="p">):</span>
+                <span class="n">v</span><span class="p">,</span> <span class="n">e</span> <span class="o">=</span> <span class="n">value</span><span class="o">.</span><span class="n">formatted</span><span class="p">()</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">v</span><span class="p">,</span> <span class="n">e</span> <span class="o">=</span> <span class="p">(</span><span class="s2">""</span> <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">value</span><span class="si">:</span><span class="s2">.3g</span><span class="si">}</span><span class="s2">"</span><span class="p">),</span> <span class="s2">""</span>
+            <span class="n">table</span><span class="p">[</span><span class="s2">"Property"</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">label</span><span class="p">)</span>
+            <span class="n">table</span><span class="p">[</span><span class="s2">"Value"</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+            <span class="n">table</span><span class="p">[</span><span class="s2">"± (95%)"</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+            <span class="n">table</span><span class="p">[</span><span class="s2">"Units"</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">units</span><span class="p">)</span>
+
+        <span class="n">row</span><span class="p">(</span><span class="s2">"ε"</span><span class="p">,</span> <span class="n">epsilon</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">isotropic</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">i</span> <span class="ow">in</span> <span class="p">((</span><span class="s2">"ε_xx"</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="s2">"ε_yy"</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="s2">"ε_zz"</span><span class="p">,</span> <span class="mi">2</span><span class="p">)):</span>
+                <span class="n">row</span><span class="p">(</span>
+                    <span class="n">name</span><span class="p">,</span>
+                    <span class="p">(</span>
+                        <span class="n">Estimate</span><span class="o">.</span><span class="n">from_samples</span><span class="p">(</span><span class="n">components</span><span class="p">[:,</span> <span class="n">i</span><span class="p">],</span> <span class="n">source</span><span class="o">=</span><span class="n">source</span><span class="p">)</span>
+                        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">components</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span>
+                        <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="n">components</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="n">i</span><span class="p">])</span>
+                    <span class="p">),</span>
+                <span class="p">)</span>
+        <span class="n">row</span><span class="p">(</span><span class="s2">"Molecular dipole μ"</span><span class="p">,</span> <span class="n">mu</span><span class="p">,</span> <span class="s2">"D"</span><span class="p">)</span>
+        <span class="n">row</span><span class="p">(</span><span class="s2">"Kirkwood factor g_K"</span><span class="p">,</span> <span class="n">g_K</span><span class="p">)</span>
+        <span class="n">row</span><span class="p">(</span><span class="s2">"|⟨M⟩| of the cell"</span><span class="p">,</span> <span class="n">M_mean</span><span class="p">,</span> <span class="s2">"D"</span><span class="p">)</span>
+        <span class="n">row</span><span class="p">(</span><span class="s2">"Dipole correlation time"</span><span class="p">,</span> <span class="n">tau</span><span class="p">,</span> <span class="s2">"ps"</span><span class="p">)</span>
         <span class="n">text</span> <span class="o">=</span> <span class="n">tabulate</span><span class="p">(</span>
-            <span class="n">table</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="s2">"keys"</span><span class="p">,</span> <span class="n">tablefmt</span><span class="o">=</span><span class="s2">"simple_outline"</span><span class="p">,</span> <span class="n">disable_numparse</span><span class="o">=</span><span class="kc">True</span>
+            <span class="n">table</span><span class="p">,</span>
+            <span class="n">headers</span><span class="o">=</span><span class="s2">"keys"</span><span class="p">,</span>
+            <span class="n">tablefmt</span><span class="o">=</span><span class="s2">"rounded_outline"</span><span class="p">,</span>
+            <span class="n">disable_numparse</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">colalign</span><span class="o">=</span><span class="p">(</span><span class="s2">"left"</span><span class="p">,</span> <span class="s2">"decimal"</span><span class="p">,</span> <span class="s2">"decimal"</span><span class="p">,</span> <span class="s2">"left"</span><span class="p">),</span>
         <span class="p">)</span>
         <span class="n">length</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span>
         <span class="n">printer</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span>
@@ -987,42 +912,88 @@
                 <span class="n">dedent</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="p">)</span>
-        <span class="n">printer</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span>
-            <span class="n">__</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">"From </span><span class="si">{</span><span class="n">n_frames</span><span class="si">}</span><span class="s2"> frames of </span><span class="si">{</span><span class="n">nruns</span><span class="si">}</span><span class="s2"> run</span><span class="si">{</span><span class="s1">'s'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">nruns</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}</span><span class="s2">"</span>
-                <span class="o">+</span> <span class="p">(</span><span class="sa">f</span><span class="s2">", every </span><span class="si">{</span><span class="n">dt</span><span class="si">:</span><span class="s2">.3g</span><span class="si">}</span><span class="s2"> ps"</span> <span class="k">if</span> <span class="n">dt</span> <span class="k">else</span> <span class="s2">""</span><span class="p">)</span>
-                <span class="o">+</span> <span class="sa">f</span><span class="s2">"; the error is </span><span class="si">{</span><span class="n">how</span><span class="si">}</span><span class="s2">."</span><span class="p">,</span>
-                <span class="n">indent</span><span class="o">=</span><span class="mi">8</span> <span class="o">*</span> <span class="s2">" "</span><span class="p">,</span>
+        <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="sa">f</span><span class="s2">"From </span><span class="si">{</span><span class="n">n_frames</span><span class="si">}</span><span class="s2"> frames of </span><span class="si">{</span><span class="n">nruns</span><span class="si">}</span><span class="s2"> run</span><span class="si">{</span><span class="s1">'s'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">nruns</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="si">}</span><span class="s2">"</span>
+            <span class="o">+</span> <span class="p">(</span><span class="sa">f</span><span class="s2">", every </span><span class="si">{</span><span class="n">dt</span><span class="si">:</span><span class="s2">.3g</span><span class="si">}</span><span class="s2"> ps"</span> <span class="k">if</span> <span class="n">dt</span> <span class="k">else</span> <span class="s2">""</span><span class="p">)</span>
+            <span class="o">+</span> <span class="sa">f</span><span class="s2">", for </span><span class="si">{</span><span class="n">n_molecules</span><span class="si">}</span><span class="s2"> molecules. "</span>
+            <span class="o">+</span> <span class="n">epsilon</span><span class="o">.</span><span class="n">describe_error</span><span class="p">()</span>
+        <span class="p">]</span>
+        <span class="k">if</span> <span class="n">isotropic</span><span class="p">:</span>
+            <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">check</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"The run is not treated as isotropic (</span><span class="si">{</span><span class="n">why</span><span class="si">}</span><span class="s2">), so the diagonal "</span>
+                <span class="s2">"components are given; ε is a third of their sum."</span>
             <span class="p">)</span>
+        <span class="n">kspace</span> <span class="o">=</span> <span class="n">runs</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"kspace"</span><span class="p">]</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="s2">"The fluctuation formula assumes Ewald or PPPM electrostatics with "</span>
+            <span class="s2">"conducting (tin-foil) boundaries"</span>
+            <span class="o">+</span> <span class="p">(</span><span class="s2">"."</span> <span class="k">if</span> <span class="n">kspace</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">"; the runs used </span><span class="si">{</span><span class="n">kspace</span><span class="si">}</span><span class="s2">."</span><span class="p">)</span>
         <span class="p">)</span>
+        <span class="k">if</span> <span class="n">kspace</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">kspace</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">EWALD_STYLES</span><span class="p">):</span>
+            <span class="n">notes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"The runs used kspace_style '</span><span class="si">{</span><span class="n">kspace</span><span class="si">}</span><span class="s2">', so the value may be wrong."</span>
+            <span class="p">)</span>
         <span class="k">if</span> <span class="n">dt</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">tau</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">length_ps</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">runs</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">])</span> <span class="o">*</span> <span class="n">dt</span>
+            <span class="n">length_ps</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">runs</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"M"</span><span class="p">])</span> <span class="o">*</span> <span class="n">dt</span>
             <span class="k">if</span> <span class="n">length_ps</span> <span class="o">&lt;</span> <span class="mi">50</span> <span class="o">*</span> <span class="n">tau</span><span class="p">:</span>
                 <span class="n">notes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                     <span class="sa">f</span><span class="s2">"Each run is </span><span class="si">{</span><span class="n">length_ps</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> ps, only </span><span class="si">{</span><span class="n">length_ps</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">tau</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> times "</span>
                     <span class="sa">f</span><span class="s2">"the correlation time of the dipole (</span><span class="si">{</span><span class="n">tau</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> ps). The "</span>
                     <span class="s2">"dielectric constant converges slowly: use longer or more runs."</span>
                 <span class="p">)</span>
-        <span class="k">for</span> <span class="n">note</span> <span class="ow">in</span> <span class="n">notes</span><span class="p">:</span>
-            <span class="n">printer</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">__</span><span class="p">(</span><span class="n">note</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">8</span> <span class="o">*</span> <span class="s2">" "</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span> <span class="o">+</span> <span class="n">notes</span><span class="p">:</span>
+            <span class="n">printer</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="n">__</span><span class="p">(</span><span class="n">line</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">8</span> <span class="o">*</span> <span class="s2">" "</span><span class="p">))</span>
         <span class="n">printer</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="s2">""</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_print_samples</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">source</span><span class="p">)</span>
+
+        <span class="n">state</span> <span class="o">=</span> <span class="n">report_state</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">printer</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">paths</span><span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_plot</span><span class="p">(</span><span class="n">fits</span><span class="p">,</span> <span class="n">runs</span><span class="p">,</span> <span class="n">acf</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_find_model</span><span class="p">()</span>
         <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s2">"epsilon"</span><span class="p">:</span> <span class="n">epsilon</span><span class="p">,</span>
-            <span class="s2">"T"</span><span class="p">:</span> <span class="n">T</span><span class="p">,</span>
-            <span class="s2">"V"</span><span class="p">:</span> <span class="n">V</span><span class="p">,</span>
+            <span class="s2">"epsilon"</span><span class="p">:</span> <span class="n">epsilon</span><span class="o">.</span><span class="n">value</span><span class="p">,</span>
+            <span class="s2">"dipole moment"</span><span class="p">:</span> <span class="n">mu</span><span class="o">.</span><span class="n">value</span><span class="p">,</span>
+            <span class="s2">"Kirkwood factor"</span><span class="p">:</span> <span class="n">g_K</span><span class="o">.</span><span class="n">value</span><span class="p">,</span>
             <span class="s2">"nruns"</span><span class="p">:</span> <span class="n">nruns</span><span class="p">,</span>
             <span class="s2">"n_frames"</span><span class="p">:</span> <span class="n">n_frames</span><span class="p">,</span>
         <span class="p">}</span>
-        <span class="k">if</span> <span class="n">stderr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">data</span><span class="p">[</span><span class="s2">"epsilon,stderr"</span><span class="p">]</span> <span class="o">=</span> <span class="n">stderr</span>
+        <span class="k">if</span> <span class="n">epsilon</span><span class="o">.</span><span class="n">stderr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">data</span><span class="p">[</span><span class="s2">"epsilon,stderr"</span><span class="p">]</span> <span class="o">=</span> <span class="n">epsilon</span><span class="o">.</span><span class="n">stderr</span>
+        <span class="k">if</span> <span class="n">g_K</span><span class="o">.</span><span class="n">stderr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">data</span><span class="p">[</span><span class="s2">"Kirkwood factor,stderr"</span><span class="p">]</span> <span class="o">=</span> <span class="n">g_K</span><span class="o">.</span><span class="n">stderr</span>
         <span class="k">if</span> <span class="n">tau</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">data</span><span class="p">[</span><span class="s2">"dipole correlation time"</span><span class="p">]</span> <span class="o">=</span> <span class="n">tau</span>
+        <span class="k">if</span> <span class="n">state</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">data</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">state_data</span><span class="p">(</span><span class="n">state</span><span class="p">))</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">store_results</span><span class="p">(</span><span class="n">configuration</span><span class="o">=</span><span class="n">configuration</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">)</span></div>
 
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_print_samples</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">samples</span><span class="p">,</span> <span class="n">source</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""The values of each run or block, in the detailed output."""</span>
+        <span class="n">what</span> <span class="o">=</span> <span class="s2">"Run"</span> <span class="k">if</span> <span class="n">source</span> <span class="o">==</span> <span class="s2">"runs"</span> <span class="k">else</span> <span class="s2">"Block"</span>
+        <span class="n">table</span> <span class="o">=</span> <span class="p">{</span><span class="n">what</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">"ε"</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">"ε_xx"</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">"ε_yy"</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">"ε_zz"</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">"g_K"</span><span class="p">:</span> <span class="p">[]}</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">s</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">samples</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+            <span class="n">table</span><span class="p">[</span><span class="n">what</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+            <span class="n">table</span><span class="p">[</span><span class="s2">"ε"</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">s</span><span class="p">[</span><span class="s1">'epsilon'</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">((</span><span class="s2">"ε_xx"</span><span class="p">,</span> <span class="s2">"ε_yy"</span><span class="p">,</span> <span class="s2">"ε_zz"</span><span class="p">),</span> <span class="n">s</span><span class="p">[</span><span class="s2">"components"</span><span class="p">]):</span>
+                <span class="n">table</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">value</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+            <span class="n">table</span><span class="p">[</span><span class="s2">"g_K"</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">s</span><span class="p">[</span><span class="s1">'g_K'</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="n">tabulate</span><span class="p">(</span>
+            <span class="n">table</span><span class="p">,</span>
+            <span class="n">headers</span><span class="o">=</span><span class="s2">"keys"</span><span class="p">,</span>
+            <span class="n">tablefmt</span><span class="o">=</span><span class="s2">"rounded_outline"</span><span class="p">,</span>
+            <span class="n">disable_numparse</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">colalign</span><span class="o">=</span><span class="p">(</span><span class="s2">"center"</span><span class="p">,</span> <span class="s2">"decimal"</span><span class="p">,</span> <span class="s2">"decimal"</span><span class="p">,</span> <span class="s2">"decimal"</span><span class="p">,</span> <span class="s2">"decimal"</span><span class="p">,</span> <span class="s2">"decimal"</span><span class="p">),</span>
+        <span class="p">)</span>
+        <span class="n">length</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="n">title</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"By </span><span class="si">{</span><span class="n">what</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span><span class="o">.</span><span class="n">center</span><span class="p">(</span><span class="n">length</span><span class="p">)</span>
+        <span class="n">print_details</span><span class="p">(</span>
+            <span class="n">printer</span><span class="p">,</span>
+            <span class="nb">str</span><span class="p">(</span><span class="n">__</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span> <span class="o">+</span> <span class="n">title</span> <span class="o">+</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span> <span class="o">+</span> <span class="n">text</span> <span class="o">+</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">8</span> <span class="o">*</span> <span class="s2">" "</span><span class="p">,</span> <span class="n">wrap</span><span class="o">=</span><span class="kc">False</span><span class="p">)),</span>
+        <span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_plot</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fits</span><span class="p">,</span> <span class="n">runs</span><span class="p">,</span> <span class="n">acf</span><span class="p">,</span> <span class="n">dt</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">"""The running estimate of ε, and the autocorrelation of the dipole."""</span>
@@ -1037,7 +1008,7 @@
         <span class="n">x_axis</span><span class="o">.</span><span class="n">anchor</span> <span class="o">=</span> <span class="n">y_axis</span>
         <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">fit</span><span class="p">,</span> <span class="n">run</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">fits</span><span class="p">,</span> <span class="n">runs</span><span class="p">),</span> <span class="n">start</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
             <span class="n">counts</span><span class="p">,</span> <span class="n">values</span> <span class="o">=</span> <span class="n">fit</span><span class="p">[</span><span class="s2">"running"</span><span class="p">]</span>
-            <span class="n">step</span> <span class="o">=</span> <span class="n">run</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="ow">or</span> <span class="mf">1.0</span>
+            <span class="n">step</span> <span class="o">=</span> <span class="n">run</span><span class="p">[</span><span class="s2">"dt"</span><span class="p">]</span> <span class="ow">or</span> <span class="mf">1.0</span>
             <span class="n">plot</span><span class="o">.</span><span class="n">add_trace</span><span class="p">(</span>
                 <span class="n">x_axis</span><span class="o">=</span><span class="n">x_axis</span><span class="p">,</span>
                 <span class="n">y_axis</span><span class="o">=</span><span class="n">y_axis</span><span class="p">,</span>
@@ -1092,7 +1063,7 @@
 <a class="viewcode-back" href="../../api/dielectric_constant_step.html#dielectric_constant_step.dielectric_constant.DielectricConstant.md_requirements">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">md_requirements</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">P</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">"""What the analysis needs from the MD: positions every 0.5 ps or so, in a</span>
-<span class="sd">        periodic cell."""</span>
+<span class="sd">        periodic cell. It analyzes fluctuations, not the dynamics."""</span>
         <span class="n">interval</span> <span class="o">=</span> <span class="p">(</span>
             <span class="n">P</span><span class="p">[</span><span class="s2">"frame interval"</span><span class="p">]</span> <span class="k">if</span> <span class="n">P</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">_static</span><span class="p">(</span><span class="s2">"frame interval"</span><span class="p">)</span>
         <span class="p">)</span>
@@ -1103,6 +1074,7 @@
         <span class="k">return</span> <span class="n">Requirements</span><span class="p">(</span>
             <span class="n">needs</span><span class="o">=</span><span class="p">[</span><span class="n">Need</span><span class="p">(</span><span class="s2">"all/position"</span><span class="p">,</span> <span class="n">max_time</span><span class="o">=</span><span class="n">interval</span><span class="p">,</span> <span class="n">why</span><span class="o">=</span><span class="s2">"the dipole"</span><span class="p">)],</span>
             <span class="n">periodic</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">dynamics</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
         <span class="p">)</span></div>
 
 
@@ -1116,7 +1088,8 @@
 <div class="viewcode-block" id="DielectricConstant.check_flowchart">
 <a class="viewcode-back" href="../../api/dielectric_constant_step.html#dielectric_constant_step.dielectric_constant.DielectricConstant.check_flowchart">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">check_flowchart</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">preceding</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Check, before the job runs, that the MD will sample what is needed."""</span>
+<span class="w">        </span><span class="sd">"""Check, before the job runs, that the MD will sample what is needed and is</span>
+<span class="sd">        set up for the analysis."""</span>
         <span class="n">source</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_static</span><span class="p">(</span><span class="s2">"md source"</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">source</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">return</span> <span class="p">[]</span>
@@ -1126,38 +1099,19 @@
 <div class="viewcode-block" id="DielectricConstant.check_configuration">
 <a class="viewcode-back" href="../../api/dielectric_constant_step.html#dielectric_constant_step.dielectric_constant.DielectricConstant.check_configuration">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">check_configuration</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">configuration</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">"""Called by an MD step before it runs MD that this step will analyze."""</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_static</span><span class="p">(</span><span class="s2">"md source"</span><span class="p">)</span> <span class="o">==</span> <span class="n">run_own_md</span><span class="p">:</span>
-            <span class="k">return</span>
+<span class="w">        </span><span class="sd">"""Called by an MD step before it runs MD that this step will analyze.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        [str]</span>
+<span class="sd">            Warnings about the structure, e.g. that it is small.</span>
+<span class="sd">        """</span>
         <span class="k">if</span> <span class="n">configuration</span><span class="o">.</span><span class="n">periodicity</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
                 <span class="sa">f</span><span class="s2">"'</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">title</span><span class="si">}</span><span class="s2">' will analyze the MD, but the system is not "</span>
                 <span class="s2">"periodic: the fluctuation formula is for a periodic cell."</span>
-            <span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="DielectricConstant.set_id">
-<a class="viewcode-back" href="../../api/dielectric_constant_step.html#dielectric_constant_step.dielectric_constant.DielectricConstant.set_id">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">set_id</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node_id</span><span class="o">=</span><span class="p">()):</span>
-<span class="w">        </span><span class="sd">"""Sequentially number the subnodes"""</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">visited</span><span class="p">:</span>
-            <span class="k">return</span> <span class="kc">None</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">visited</span> <span class="o">=</span> <span class="kc">True</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_id</span> <span class="o">=</span> <span class="n">node_id</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">set_subids</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_id</span><span class="p">)</span>
-            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">next</span><span class="p">()</span></div>
-
-
-<div class="viewcode-block" id="DielectricConstant.set_subids">
-<a class="viewcode-back" href="../../api/dielectric_constant_step.html#dielectric_constant_step.dielectric_constant.DielectricConstant.set_subids">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">set_subids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node_id</span><span class="o">=</span><span class="p">()):</span>
-<span class="w">        </span><span class="sd">"""Set the ids of the nodes in the subflowchart"""</span>
-        <span class="n">node</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">subflowchart</span><span class="o">.</span><span class="n">get_node</span><span class="p">(</span><span class="s2">"1"</span><span class="p">)</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
-        <span class="n">n</span> <span class="o">=</span> <span class="mi">1</span>
-        <span class="k">while</span> <span class="n">node</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">node</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">set_id</span><span class="p">((</span><span class="o">*</span><span class="n">node_id</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">n</span><span class="p">)))</span>
-            <span class="n">n</span> <span class="o">+=</span> <span class="mi">1</span></div>
+            <span class="p">)</span>
+        <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"'</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">title</span><span class="si">}</span><span class="s2">': </span><span class="si">{</span><span class="n">w</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">size_warnings</span><span class="p">(</span><span class="n">configuration</span><span class="p">)]</span></div>
 </div>
 
 </pre></div>
