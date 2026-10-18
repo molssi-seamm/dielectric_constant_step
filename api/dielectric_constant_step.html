@@ -7,7 +7,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>dielectric_constant_step package &#8212; SEAMM Dielectric Constant Plug-in 2026.10.17.1 documentation</title>
+    <title>dielectric_constant_step package &#8212; SEAMM Dielectric Constant Plug-in 2026.10.18 documentation</title>
   
   
   
@@ -40,7 +40,7 @@
   <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
 
-    <script src="../_static/documentation_options.js?v=62bfd45e"></script>
+    <script src="../_static/documentation_options.js?v=16cc37ab"></script>
     <script src="../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -55,7 +55,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="color-scheme" content="light dark"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="2026.10.17.1" />
+  <meta name="docsearch:version" content="2026.10.18" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -636,6 +636,17 @@ periodic cell. It analyzes fluctuations, not the dynamics.</p>
 <dd><p>The most frames used for the mean molecular dipole</p>
 </dd></dl>
 
+<dl class="py data">
+<dt class="sig sig-object py" id="dielectric_constant_step.dielectric_constant.NO_CHARGE">
+<span class="sig-prename descclassname"><span class="pre">dielectric_constant_step.dielectric_constant.</span></span><span class="sig-name descname"><span class="pre">NO_CHARGE</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">1e-08</span></span><a class="headerlink" href="#dielectric_constant_step.dielectric_constant.NO_CHARGE" title="Link to this definition">#</a></dt>
+<dd><p>a nonpolar fluid such as argon</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Charges smaller than this (e) count as none</p>
+</dd>
+</dl>
+</dd></dl>
+
 <dl class="py function">
 <dt class="sig sig-object py" id="dielectric_constant_step.dielectric_constant.hill_formula">
 <span class="sig-prename descclassname"><span class="pre">dielectric_constant_step.dielectric_constant.</span></span><span class="sig-name descname"><span class="pre">hill_formula</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">symbols</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/dielectric_constant_step/dielectric_constant.html#hill_formula"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#dielectric_constant_step.dielectric_constant.hill_formula" title="Link to this definition">#</a></dt>
@@ -1028,6 +1039,7 @@ A SEAMM plug-in for Dielectric Constant</p>
 </li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dielectric_constant_step.dielectric_constant.EWALD_STYLES"><code class="docutils literal notranslate"><span class="pre">EWALD_STYLES</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dielectric_constant_step.dielectric_constant.MAX_DIPOLE_FRAMES"><code class="docutils literal notranslate"><span class="pre">MAX_DIPOLE_FRAMES</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dielectric_constant_step.dielectric_constant.NO_CHARGE"><code class="docutils literal notranslate"><span class="pre">NO_CHARGE</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dielectric_constant_step.dielectric_constant.hill_formula"><code class="docutils literal notranslate"><span class="pre">hill_formula()</span></code></a></li>
 </ul>
 </li>
