@@ -1,6 +1,13 @@
 =======
 History
 =======
+2026.10.18 -- Bugfix: fluids without partial charges are skipped
+    * For a fluid whose molecules have no partial charges, such as argon, the step
+      printed a dielectric constant of 1, a dipole of 0 and a Kirkwood factor of nan,
+      with a warning about the electrostatics. It now says there is no dipole and skips
+      the analysis, as Ionic Conductivity does without ions, and checking the flowchart
+      warns of it once the atoms are typed.
+
 2026.10.17.1 -- Analyze MD run before the step; more results; labelled errors
     * The step analyzes MD run before it in the flowchart -- the runs of a Loop around
       the MD, as independent replicas ("the last MD run of each loop iteration", the

@@ -35,7 +35,9 @@ Na⁺ or molecular like BF₄⁻), and any molecule whose charge is not an integ
 is a problem with the charges and is left out with a note.
 
 The charges are the forcefield's. A machine-learned forcefield has no fixed charges,
-so the step stops with a message for such MD.
+so the step stops with a message for such MD. A fluid whose molecules have no partial
+charges, such as argon, has no dipole: the step says so and skips the analysis, and
+checking the flowchart warns of it once the atoms are typed.
 
 Where the MD comes from
 =======================

@@ -64,6 +64,9 @@ csv_file = path / "properties.csv"
 if path.exists():
     molsystem.add_properties_from_file(csv_file)
 
+#: Charges smaller than this (e) count as none: a nonpolar fluid such as argon
+NO_CHARGE = 1.0e-8
+
 #: The kspace styles with conducting boundaries, for which the formula holds
 EWALD_STYLES = ("ewald", "pppm")
 #: e·Å in debye
@@ -287,6 +290,17 @@ class DielectricConstant(seamm.Node):
         chosen = [m for m in chosen if m not in classes["other"]]
         if len(chosen) == 0:
             raise RuntimeError(f"'{self.title}': there are no neutral molecules.")
+        atoms = np.concatenate([np.asarray(molecules[m], dtype=int) for m in chosen])
+        if np.all(np.abs(charges[atoms]) < NO_CHARGE):
+            printer.normal(
+                __(
+                    "The molecules have no partial charges, so they have no dipole "
+                    "and there is no dielectric constant to calculate: skipped.",
+                    indent=self.indent + 4 * " ",
+                )
+            )
+            printer.normal("")
+            return
 
         notes = []
         names = Counter(
@@ -593,4 +607,16 @@ class DielectricConstant(seamm.Node):
                 f"'{self.title}' will analyze the MD, but the system is not "
                 "periodic: the fluctuation formula is for a periodic cell."
             )
-        return [f"'{self.title}': {w}" for w in size_warnings(configuration)]
+        result = size_warnings(configuration)
+        # The forcefield's charges, once the atoms are typed. Formal charges say
+        # nothing: those of water are zero too.
+        atoms = configuration.atoms
+        keys = [k for k in atoms.keys() if k.startswith("charges_")]
+        if len(keys) > 0:
+            charges = np.array(atoms.get_column_data(keys[0]), dtype=float)
+            if np.all(np.abs(charges) < NO_CHARGE):
+                result.append(
+                    "The atoms have no partial charges, so there will be no "
+                    "dielectric constant to calculate."
+                )
+        return [f"'{self.title}': {w}" for w in result]
