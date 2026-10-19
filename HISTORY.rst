@@ -1,6 +1,11 @@
 =======
 History
 =======
+2026.10.19 -- Scaled ion charges
+    * In MD with the charges of the ions scaled (LAMMPS's 'Scale the charges of ions
+      by', e.g. 0.8), the ions were taken for molecules with broken charges. They are
+      now recognized as ions, and left out of the dipole as before.
+
 2026.10.18 -- Bugfix: fluids without partial charges are skipped
     * For a fluid whose molecules have no partial charges, such as argon, the step
       printed a dielectric constant of 1, a dipole of 0 and a Kirkwood factor of nan,

@@ -21,7 +21,7 @@ class _Printer:
 
 
 def _setup(monkeypatch, charges):
-    md = SimpleNamespace(charges=lambda group: charges)
+    md = SimpleNamespace(charges=lambda group: charges, ion_charge_scale=1.0)
 
     @contextmanager
     def open_md(path):
