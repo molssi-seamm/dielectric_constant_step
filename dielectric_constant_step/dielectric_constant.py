@@ -274,6 +274,8 @@ class DielectricConstant(seamm.Node):
 
         with open_md(self.paths[0]) as md:
             charges = md.charges("all")
+            # The charges of ions may have been scaled, e.g. by 0.8
+            scale = md.ion_charge_scale
         if charges is None:
             raise RuntimeError(
                 f"'{self.title}': the MD has no fixed charges, as with a "
@@ -281,7 +283,7 @@ class DielectricConstant(seamm.Node):
             )
         charges = np.asarray(charges, dtype=float)
 
-        classes = classify_molecules(charges, molecules)
+        classes = classify_molecules(charges, molecules, scale=scale)
         mode = P["dipole of"]
         neutral_only = mode == "the neutral molecules" or (
             mode == "automatic" and len(classes["ions"]) > 0
