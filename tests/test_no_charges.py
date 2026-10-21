@@ -30,7 +30,7 @@ def _setup(monkeypatch, charges):
     monkeypatch.setattr(module, "open_md", open_md)
     printer = _Printer()
     monkeypatch.setattr(module, "printer", printer)
-    n = len(charges)
+    n = len(charges) if charges is not None else 2
     configuration = SimpleNamespace(
         find_molecules=lambda as_indices: [[i] for i in range(n)],
         atoms=SimpleNamespace(symbols=["Ar"] * n),
@@ -63,3 +63,16 @@ def test_charged_molecules_are_not_skipped(monkeypatch):
 
 def test_no_charge_threshold():
     assert np.all(np.abs(np.zeros(3)) < module.NO_CHARGE)
+
+
+def test_mlff_without_charges_is_skipped(monkeypatch):
+    """An MD with no fixed charges (an MLFF) is skipped with a note, not an error,
+    so the analyses after it still run (ChemAI job 5357, 2026-10-21)."""
+    step, configuration, printer = _setup(monkeypatch, None)
+    configuration.find_molecules = lambda as_indices: [[0, 1]]
+    result = module.DielectricConstant.analyze(
+        step, P={"dipole of": "automatic"}, configuration=configuration
+    )
+    assert result is None
+    text = " ".join(printer.lines)
+    assert "no fixed charges" in text and "skipped" in text

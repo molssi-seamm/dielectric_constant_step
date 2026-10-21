@@ -1,6 +1,11 @@
 =======
 History
 =======
+2026.10.21 -- Bugfix: an MD without fixed charges is skipped, not an error
+    * For an MD without fixed charges, as with a machine-learned forcefield, the step
+      stopped the job with an error, so the analyses after it never ran. It now says
+      there is no dipole to analyze and skips the analysis.
+
 2026.10.19 -- Scaled ion charges
     * In MD with the charges of the ions scaled (LAMMPS's 'Scale the charges of ions
       by', e.g. 0.8), the ions were taken for molecules with broken charges. They are
