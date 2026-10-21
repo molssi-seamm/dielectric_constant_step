@@ -277,10 +277,18 @@ class DielectricConstant(seamm.Node):
             # The charges of ions may have been scaled, e.g. by 0.8
             scale = md.ion_charge_scale
         if charges is None:
-            raise RuntimeError(
-                f"'{self.title}': the MD has no fixed charges, as with a "
-                "machine-learned forcefield, so there is no dipole to analyze."
+            # Not an error: the analyses after this one should still run
+            # (2026-10-21: ChemAI job 5357 stopped here, before Ionic Conductivity)
+            printer.normal(
+                __(
+                    "The MD has no fixed charges, as with a machine-learned "
+                    "forcefield, so there is no dipole and no dielectric constant to "
+                    "calculate: skipped.",
+                    indent=self.indent + 4 * " ",
+                )
             )
+            printer.normal("")
+            return
         charges = np.asarray(charges, dtype=float)
 
         classes = classify_molecules(charges, molecules, scale=scale)
